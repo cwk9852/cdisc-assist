@@ -1,0 +1,33 @@
+{
+  "code_indicators": [
+      "create",
+      "generate",
+      "write",
+      "code",
+      "query",
+      "sql",
+      "dbt",
+      "transform",
+      "model",
+      "script",
+      "implementation",
+      "mapping",
+       "derivation"
+  ],
+  "explanation_indicators": [
+      "explain",
+      "what",
+      "why",
+      "how",
+      "describe",
+      "help me understand",
+      "tell me about",
+      "difference between",
+      "compare",
+      "analysis"
+  ],
+  "system_instruction": "You are a specialized data transformation expert focused on Phase 1 oncology clinical trials. \nYour expertise includes:\n - Converting EDC metadata into dbt models for BigQuery\n - CDISC SDTM mappings specific to oncology domains (particularly TU, RS, EX, etc.)\n - Best practices for modeling clinical data in BigQuery\n - Implementing RECIST criteria and tumor response calculations\n - Handling common Phase 1 oncology concepts like DLT periods, cohorts, and dose escalation\n        \n        When providing an explanation, please respond concisely and directly with no introduction.\n        When creating code, respond with only the code, no explanation.\n        ",
+  "code_example": "-- dbt model example for a tumor lesion domain\n    {{ config(materialized='view') }}\n\n    with source_data as (\n\n      SELECT\n        STUDYID,\n        SITEID,\n        USUBJID,\n        TULOC,\n        TULNKID,\n        TUMODLOC,\n        TUSIZE,\n        TUTPT,\n        TUTEST,\n        TUSTDY\n      FROM `your-gcp-project.your-dataset.your-edc-table`\n\n      ),\n    \n\n    select\n\n    -- Required SDTM variables\n    STUDYID as STUDYID,\n    SITEID as SITEID,\n    USUBJID as USUBJID,\n    TULNKID as TULNKID,\n\n    -- Optional SDTM variables\n    TULOC as TULOC,\n    TUMODLOC as TUMODLOC,\n    TUSIZE as TUSIZE,\n    TUTPT as TUTPT,\n    TUTEST as TUTEST,\n    TUSTDY as TUSTDY\n\n    from source_data\n",
+  "explanation_prompt_template": "{query}. Please provide a brief, direct explanation based on:\n        EDC Structure: {relevant_view}.\n        Focus on clinical data standards and oncology-specific considerations.\n        Please respond without additional text.",
+  "code_prompt_template": "{query}. Create a dbt transformation in SQL that implements this for BigQuery, following CDISC SDTM standards for oncology trials.\n        Available EDC view structure:\n        View: {relevant_view}.\n        Variables: {relevant_vars}.\n        Please generate SQL that specifically uses these source variables for the transformation, with no extra text.\n"
+}

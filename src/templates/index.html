@@ -1,0 +1,205 @@
+<!doctype html>
+<html>
+
+<head>
+  <title>CDISC SDTM Mapping Assistant</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='main.css') }}" />
+  <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;500;700&display=swap" rel="stylesheet">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.7.0/styles/monokai-sublime.min.css">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.7.0/highlight.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.7.0/languages/sql.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.7.0/languages/python.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.7.0/languages/r.min.js"></script>
+</head>
+
+<body>
+  <div id="upload-banner">
+    <!-- Success message will be inserted here -->
+  </div>
+  <div class="main-content">
+    <div class="sidebar">
+      <div class="header">
+        <img src="{{ url_for('static', filename='icon.png') }}" alt="Logo" />
+        <div class="app-title">CDISC SDTM Assistant</div>
+      </div>
+      
+      <div class="files-section">
+        <h3>Clinical Data Files</h3>
+        <div id="filesList" class="files-list">
+          {% if files %}
+            {% for file in files %}
+            <div class="file-entry">
+              <div>
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                  <path d="M14 2H6C4.9 2 4 2.9 4 4V20C4 21.1 4.9 22 6 22H18C19.1 22 20 21.1 20 20V8L14 2Z" fill="#4285F4"/>
+                  <path d="M14 2V8H20L14 2Z" fill="#8AB4F8"/>
+                </svg>
+                <span class="file-name">{{ file.name }}</span>
+              </div>
+              <span class="file-type">{{ file.type }}</span>
+            </div>
+            {% endfor %}
+          {% else %}
+            <p id="filesPlaceholder" class="files-placeholder">No files loaded</p>
+          {% endif %}
+        </div>
+        <hr id="filesDivider">
+        <div class="upload-section">
+          <p>Upload additional clinical data files:</p>
+          <input type="file" id="file-upload" name="file-upload" class="file-upload-input" />
+          <label for="file-upload" class="file-upload-btn">Upload EDC/SDTM Files</label>
+        </div>
+        <div class="actions-section">
+          <button id="clear-chat-btn" class="action-btn">Clear Chat History</button>
+        </div>
+      </div>
+      
+      <div class="domain-guide">
+        <h3>Domain Quick Reference</h3>
+        <div class="tab-controls">
+          <button class="tab-btn active" data-tab="sdtm">SDTM</button>
+          <button class="tab-btn" data-tab="adam">ADaM</button>
+        </div>
+        
+        <div id="sdtm-domains" class="domain-list active">
+          <div class="domain-item"><span class="domain-code">DM</span> Demographics</div>
+          <div class="domain-item"><span class="domain-code">AE</span> Adverse Events</div>
+          <div class="domain-item"><span class="domain-code">CM</span> Concomitant Medications</div>
+          <div class="domain-item"><span class="domain-code">EX</span> Exposure</div>
+          <div class="domain-item"><span class="domain-code">LB</span> Laboratory Tests</div>
+          <div class="domain-item"><span class="domain-code">MH</span> Medical History</div>
+          <div class="domain-item"><span class="domain-code">DH</span> Disease History</div>
+          <div class="domain-item"><span class="domain-code">TU</span> Tumor Identification</div>
+          <div class="domain-item"><span class="domain-code">RS</span> Disease Response</div>
+          <div class="domain-item"><span class="domain-code">VS</span> Vital Signs</div>
+        </div>
+        
+        <div id="adam-domains" class="domain-list">
+          <div class="domain-item"><span class="domain-code">ADSL</span> Subject Level</div>
+          <div class="domain-item"><span class="domain-code">ADAE</span> Adverse Events</div>
+          <div class="domain-item"><span class="domain-code">ADCM</span> Concomitant Meds</div>
+          <div class="domain-item"><span class="domain-code">ADEX</span> Exposure</div>
+          <div class="domain-item"><span class="domain-code">ADLB</span> Laboratory Tests</div>
+          <div class="domain-item"><span class="domain-code">ADTU</span> Tumor Analysis</div>
+          <div class="domain-item"><span class="domain-code">ADRS</span> Response</div>
+          <div class="domain-item"><span class="domain-code">ADTTE</span> Time-to-Event</div>
+          <div class="domain-item"><span class="domain-code">ADTR</span> Tumor Response</div>
+          <div class="domain-item"><span class="domain-code">ADVS</span> Vital Signs</div>
+        </div>
+      </div>
+    </div>
+    
+    <div class="chat-container">
+      <div class="chat-header">
+        <h2>CDISC SDTM Mapping Assistant</h2>
+        <p class="chat-subtitle">Ask questions about EDC to SDTM mappings, dbt transformations, or clinical data modeling</p>
+      </div>
+      
+      <div class="messages">
+        {% if not chat_history %}
+        <div class="welcome-message">
+          <h3>Welcome to the CDISC SDTM Assistant</h3>
+          <p>I can help you with:</p>
+          <ul>
+            <li>Converting EDC metadata into dbt models for BigQuery</li>
+            <li>Creating SDTM mappings for oncology clinical trials</li>
+            <li>Implementing RECIST criteria and tumor response calculations</li>
+            <li>Building data transformations for clinical data analysis</li>
+          </ul>
+          <p>Try asking:</p>
+          <div class="example-queries">
+            <div class="example-query" id="ex-1">"Create a mapping from EDC tumor assessment to SDTM TU domain"</div>
+            <div class="example-query" id="ex-2">"How should I implement RECIST 1.1 criteria in BigQuery?"</div>
+            <div class="example-query" id="ex-3">"Generate a dbt model for mapping adverse events to SDTM AE domain"</div>
+          </div>
+        </div>
+        {% else %}
+          {% for message in chat_history %}
+          <div class="message-role {{ 'user' if message.role == 'user' else '' }}">
+            {{ message.role.capitalize() }}
+          </div>
+          <div class="{{ 'user-message' if message.role == 'user' else 'assistant-message' }}">
+            {{ message.content }}
+          </div>
+          {% endfor %}
+        {% endif %}
+      </div>
+      
+      <div class="message-input-container">
+        <form action="/chat" method="post">
+          <textarea name="message" id="message-input" placeholder="Ask about CDISC SDTM mappings or dbt transformations..." required></textarea>
+          <div class="button-group">
+            <button type="submit" id="send-btn">Send</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+  
+  <script src="{{ url_for('static', filename='chat.js') }}"></script>
+  <script>
+    // Simple initialization script
+    window.addEventListener('DOMContentLoaded', function() {
+      // Set up example query handling
+      document.querySelectorAll('.example-query').forEach(example => {
+        example.addEventListener('click', function() {
+          document.getElementById('message-input').value = this.textContent.replace(/^\"|\"$/g, '');
+        });
+      });
+      
+      // Set up domain item click handling
+      document.querySelectorAll('.domain-item').forEach(item => {
+        item.addEventListener('click', function() {
+          const domainCode = this.querySelector('.domain-code').textContent;
+          const messageInput = document.getElementById('message-input');
+          
+          // Add the domain code to the message input
+          if (messageInput.value) {
+            messageInput.value += ' ' + domainCode;
+          } else {
+            messageInput.value = 'Tell me about the ' + domainCode + ' domain';
+          }
+          
+          // Focus the input
+          messageInput.focus();
+        });
+      });
+      
+      // Set up tab switching
+      document.querySelectorAll('.tab-btn').forEach(button => {
+        button.addEventListener('click', function() {
+          document.querySelectorAll('.tab-btn').forEach(btn => btn.classList.remove('active'));
+          document.querySelectorAll('.domain-list').forEach(list => list.classList.remove('active'));
+          
+          this.classList.add('active');
+          document.getElementById(this.getAttribute('data-tab') + '-domains').classList.add('active');
+        });
+      });
+      
+      // Set up clear chat button
+      document.getElementById('clear-chat-btn').addEventListener('click', function() {
+        document.querySelector('.messages').innerHTML = `
+          <div class="welcome-message">
+            <h3>Welcome to the CDISC Standards Assistant</h3>
+            <p>I can help you with:</p>
+            <ul>
+              <li>Converting source data into SDTM/ADaM models</li>
+              <li>Creating CDISC mappings for CRF and NON-CRF Data Sources</li>
+              <li>Implementing datasets based on provided source and target metadata</li>
+              <li>Building data transformations for clinical data analysis</li>
+            </ul>
+            <p>Try asking:</p>
+            <div class="example-queries">
+              <div class="example-query" id="ex-1">"Create a mapping from EDC DM to SDTM DM domain"</div>
+              <div class="example-query" id="ex-2">"How should I implement best overall response in ADRS?"</div>
+              <div class="example-query" id="ex-3">"Generate a model for mapping adverse events to ADAE"</div>
+            </div>
+          </div>
+        `;
+      });
+    });
+  </script>
+</body>
+
+</html>
