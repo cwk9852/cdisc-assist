@@ -233,6 +233,9 @@ input[type="button"] {
   display: flex;
   flex-direction: column;
   box-shadow: 2px 0 5px rgba(0,0,0,0.05);
+  /* Make the sidebar a flex container that properly handles child elements */
+  height: 100%;
+  overflow: hidden;
 }
 
 .header {
@@ -257,9 +260,19 @@ input[type="button"] {
   font-weight: 500;
 }
 
-.files-section, .domain-guide {
+.files-section {
   padding: 15px;
   border-bottom: 1px solid #eaeaea;
+}
+
+.domain-guide {
+  padding: 15px;
+  border-bottom: 1px solid #eaeaea;
+  display: flex;
+  flex-direction: column;
+  /* Make it fill remaining space in the sidebar */
+  flex: 1;
+  min-height: 0; /* Required for proper flex behavior */
 }
 
 .files-list {
@@ -327,9 +340,11 @@ input[type="button"] {
   display: flex;
   flex-direction: column;
   gap: 8px;
-  max-height: 250px;
   overflow-y: auto;
   transition: all 0.3s ease;
+  /* Let the domain list fill the available space */
+  flex: 1;
+  min-height: 0; /* Required for proper flex behavior */
 }
 
 .domain-list:not(.active) {

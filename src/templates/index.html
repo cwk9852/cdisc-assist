@@ -2,7 +2,7 @@
 <html>
 
 <head>
-  <title>CDISC SDTM Mapping Assistant</title>
+  <title>CDISC Standards Assistant</title>
   <link rel="stylesheet" href="{{ url_for('static', filename='main.css') }}" />
   <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;500;700&display=swap" rel="stylesheet">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -21,7 +21,7 @@
     <div class="sidebar">
       <div class="header">
         <img src="{{ url_for('static', filename='icon.png') }}" alt="Logo" />
-        <div class="app-title">CDISC SDTM Assistant</div>
+        <div class="app-title">CDISC Standards Assistant</div>
       </div>
       
       <div class="files-section">
@@ -48,7 +48,7 @@
         <div class="upload-section">
           <p>Upload additional clinical data files:</p>
           <input type="file" id="file-upload" name="file-upload" class="file-upload-input" />
-          <label for="file-upload" class="file-upload-btn">Upload EDC/SDTM Files</label>
+          <label for="file-upload" class="file-upload-btn">Upload Clinical Data Files</label>
         </div>
         <div class="actions-section">
           <button id="clear-chat-btn" class="action-btn">Clear Chat History</button>
@@ -92,26 +92,26 @@
     
     <div class="chat-container">
       <div class="chat-header">
-        <h2>CDISC SDTM Mapping Assistant</h2>
-        <p class="chat-subtitle">Ask questions about EDC to SDTM mappings, dbt transformations, or clinical data modeling</p>
+        <h2>CDISC Standards Assistant</h2>
+        <p class="chat-subtitle">Ask questions about SDTM/ADaM mappings, dbt transformations, or clinical data modeling</p>
       </div>
       
       <div class="messages">
         {% if not chat_history %}
         <div class="welcome-message">
-          <h3>Welcome to the CDISC SDTM Assistant</h3>
+          <h3>Welcome to the CDISC Standards Assistant</h3>
           <p>I can help you with:</p>
           <ul>
-            <li>Converting EDC metadata into dbt models for BigQuery</li>
-            <li>Creating SDTM mappings for oncology clinical trials</li>
-            <li>Implementing RECIST criteria and tumor response calculations</li>
-            <li>Building data transformations for clinical data analysis</li>
+            <li>Converting source data into SDTM/ADaM standards</li>
+            <li>Creating dbt models and SQL transformations for clinical data</li>
+            <li>Implementing RECIST criteria and oncology-specific analyses</li>
+            <li>Designing ADaM datasets for efficacy and safety analysis</li>
           </ul>
           <p>Try asking:</p>
           <div class="example-queries">
-            <div class="example-query" id="ex-1">"Create a mapping from EDC tumor assessment to SDTM TU domain"</div>
-            <div class="example-query" id="ex-2">"How should I implement RECIST 1.1 criteria in BigQuery?"</div>
-            <div class="example-query" id="ex-3">"Generate a dbt model for mapping adverse events to SDTM AE domain"</div>
+            <div class="example-query" id="ex-1">"Create a mapping from EDC tumor assessment to ADTU"</div>
+            <div class="example-query" id="ex-2">"How should I implement best overall response in ADRS?"</div>
+            <div class="example-query" id="ex-3">"Generate a dbt model for mapping adverse events to ADAE"</div>
           </div>
         </div>
         {% else %}
@@ -128,7 +128,7 @@
       
       <div class="message-input-container">
         <form action="/chat" method="post">
-          <textarea name="message" id="message-input" placeholder="Ask about CDISC SDTM mappings or dbt transformations..." required></textarea>
+          <textarea name="message" id="message-input" placeholder="Ask about CDISC standards, mappings, or transformations..." required></textarea>
           <div class="button-group">
             <button type="submit" id="send-btn">Send</button>
           </div>
@@ -179,24 +179,49 @@
       
       // Set up clear chat button
       document.getElementById('clear-chat-btn').addEventListener('click', function() {
-        document.querySelector('.messages').innerHTML = `
-          <div class="welcome-message">
-            <h3>Welcome to the CDISC Standards Assistant</h3>
-            <p>I can help you with:</p>
-            <ul>
-              <li>Converting source data into SDTM/ADaM models</li>
-              <li>Creating CDISC mappings for CRF and NON-CRF Data Sources</li>
-              <li>Implementing datasets based on provided source and target metadata</li>
-              <li>Building data transformations for clinical data analysis</li>
-            </ul>
-            <p>Try asking:</p>
-            <div class="example-queries">
-              <div class="example-query" id="ex-1">"Create a mapping from EDC DM to SDTM DM domain"</div>
-              <div class="example-query" id="ex-2">"How should I implement best overall response in ADRS?"</div>
-              <div class="example-query" id="ex-3">"Generate a model for mapping adverse events to ADAE"</div>
-            </div>
-          </div>
-        `;
+        // First send a request to clear chat session on server
+        fetch('/clear_chat', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          }
+        })
+        .then(response => response.json())
+        .then(data => {
+          if (data.success) {
+            // Then update the UI
+            document.querySelector('.messages').innerHTML = `
+              <div class="welcome-message">
+                <h3>Welcome to the CDISC Standards Assistant</h3>
+                <p>I can help you with:</p>
+                <ul>
+                  <li>Converting source data into SDTM/ADaM standards</li>
+                  <li>Creating dbt models and SQL transformations for clinical data</li>
+                  <li>Implementing RECIST criteria and oncology-specific analyses</li>
+                  <li>Designing ADaM datasets for efficacy and safety analysis</li>
+                </ul>
+                <p>Try asking:</p>
+                <div class="example-queries">
+                  <div class="example-query" id="ex-1">"Create a mapping from EDC tumor assessment to ADTU"</div>
+                  <div class="example-query" id="ex-2">"How should I implement best overall response in ADRS?"</div>
+                  <div class="example-query" id="ex-3">"Generate a dbt model for mapping adverse events to ADAE"</div>
+                </div>
+              </div>
+            `;
+            
+            // Re-bind the example query click handlers
+            document.querySelectorAll('.example-query').forEach(example => {
+              example.addEventListener('click', function() {
+                document.getElementById('message-input').value = this.textContent.replace(/^\"|\"$/g, '');
+              });
+            });
+          } else {
+            console.error('Failed to clear chat history:', data.message);
+          }
+        })
+        .catch(error => {
+          console.error('Error clearing chat history:', error);
+        });
       });
     });
   </script>
