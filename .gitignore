@@ -167,3 +167,4 @@ src/.env
 .DS_Store
 /quickstart
 /src/data
+/src/session_data

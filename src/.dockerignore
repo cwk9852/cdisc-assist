@@ -1,0 +1,47 @@
+# Git
+.git
+.gitignore
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+*.egg-info/
+.installed.cfg
+*.egg
+venv/
+.venv/
+ENV/
+
+# IDE files
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Session and upload data (will be created in the container)
+uploads/*
+session_data/*
+!uploads/.gitkeep
+!session_data/.gitkeep
+
+# Temporary files
+*.log
+*.csv
+*.sqlite
+*.db
+.DS_Store

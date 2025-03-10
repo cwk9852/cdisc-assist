@@ -6,13 +6,15 @@
   <link rel="stylesheet" href="{{ url_for('static', filename='main.css') }}" />
   <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;500;700&display=swap" rel="stylesheet">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.7.0/styles/monokai-sublime.min.css">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.7.0/styles/github.min.css">
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.7.0/highlight.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.7.0/languages/sql.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.7.0/languages/python.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.7.0/languages/r.min.js"></script>
-  <!-- Add marked.js for Markdown parsing -->
-  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.7.0/languages/javascript.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.7.0/languages/bash.min.js"></script>
+  <!-- Using micromark for lightweight, fast markdown parsing -->
+  <script src="https://cdn.jsdelivr.net/npm/micromark@3.2.0/index.min.js"></script>
 </head>
 
 <body>
@@ -69,7 +71,7 @@
           <div class="tooltip-content">
             <p id="tooltip-domain-desc"></p>
             <div class="tooltip-variables">
-              <strong>Common Variables:</strong>
+              <strong>CORE Variables:</strong>
               <div id="tooltip-domain-vars"></div>
             </div>
           </div>
@@ -120,8 +122,11 @@
       </div>
       
       <div class="messages">
-        {% if not chat_history %}
+        {% if not messages %}
         <div class="welcome-message">
+          {% if welcome_html %}
+            {{ welcome_html|safe }}
+          {% else %}
           <h3>Welcome to the CDISC Standards Assistant</h3>
           <p>I can help you with:</p>
           <ul>
@@ -138,17 +143,17 @@
           </div>
           
           <p class="prompt-tip">For best results, ask for explanations about domains before requesting code.</p>
+          {% endif %}
         </div>
         {% else %}
-          {% for message in chat_history %}
-          <div class="message-role {{ 'user' if message.role == 'user' else '' }}">
-            {{ message.role.capitalize() }}
-          </div>
-          <!-- Keep it very simple to avoid template rendering issues -->
+          {% for message in messages %}
+          <!-- Store the raw content in a hidden input to preserve markdown formatting -->
+          <input type="hidden" class="message-raw-content" data-id="{{ message.id }}" value="{{ message.content }}">
+          
           {% if message.role == 'user' %}
-            <div class="user-message">{{ message.content }}</div>
+            <div class="user-message user-container" data-id="{{ message.id }}"></div>
           {% else %}
-            <div class="assistant-message">{{ message.content }}</div>
+            <div class="assistant-message assistant-container" data-id="{{ message.id }}"></div>
           {% endif %}
           {% endfor %}
         {% endif %}
@@ -167,8 +172,55 @@
   
   <script src="{{ url_for('static', filename='chat.js') }}"></script>
   <script>
-    // Simple initialization script
-    window.addEventListener('DOMContentLoaded', function() {
+    document.addEventListener('DOMContentLoaded', function() {
+      // Format any existing messages by accessing the raw content
+      const rawMessages = document.querySelectorAll('.message-raw-content');
+      rawMessages.forEach(function(rawMessage, index) {
+        const content = rawMessage.value;
+        const messageId = index + 1;
+        const messageContainer = document.querySelector(`[data-id="${messageId}"]`);
+        
+        if (messageContainer) {
+          if (messageContainer.classList.contains('user-container')) {
+            // Simple formatting for user messages
+            messageContainer.textContent = content;
+            messageContainer.innerHTML = messageContainer.innerHTML.replace(/\n/g, '<br>');
+          } else {
+            // Full markdown formatting for assistant messages
+            messageContainer.innerHTML = formatContent(content);
+            
+            // Apply syntax highlighting
+            messageContainer.querySelectorAll('pre code').forEach(block => {
+              hljs.highlightElement(block);
+              block.classList.add('highlighted');
+            });
+            
+            // Add copy functionality to code blocks
+            messageContainer.querySelectorAll('.copy-btn').forEach(btn => {
+              btn.addEventListener('click', function() {
+                const codeBlock = this.closest('.code-block');
+                const code = codeBlock?.querySelector('pre code');
+                if (code) {
+                  navigator.clipboard.writeText(code.textContent)
+                    .then(() => {
+                      const originalText = this.textContent;
+                      this.textContent = 'Copied!';
+                      this.style.backgroundColor = '#4caf50';
+                      this.style.color = 'white';
+                      
+                      setTimeout(() => {
+                        this.textContent = originalText;
+                        this.style.backgroundColor = '';
+                        this.style.color = '#2563eb';
+                      }, 1500);
+                    });
+                }
+              });
+            });
+          }
+        }
+      });
+      
       // Set up example query handling
       document.querySelectorAll('.example-query').forEach(example => {
         example.addEventListener('click', function() {
@@ -197,51 +249,95 @@
       // Set up tab switching
       document.querySelectorAll('.tab-btn').forEach(button => {
         button.addEventListener('click', function() {
+          // Remove active class from all buttons and lists
           document.querySelectorAll('.tab-btn').forEach(btn => btn.classList.remove('active'));
-          document.querySelectorAll('.domain-list').forEach(list => list.classList.remove('active'));
+          document.querySelectorAll('.domain-list').forEach(list => {
+            list.classList.remove('active');
+            list.style.display = 'none';
+          });
           
+          // Add active class to clicked button and corresponding list
           this.classList.add('active');
-          document.getElementById(this.getAttribute('data-tab') + '-domains').classList.add('active');
+          const targetList = document.getElementById(this.getAttribute('data-tab') + '-domains');
+          targetList.classList.add('active');
+          targetList.style.display = 'flex';
         });
       });
+
+      // Set initial state - SDTM tab active
+      document.querySelector('.tab-btn[data-tab="sdtm"]').classList.add('active');
+      document.getElementById('sdtm-domains').style.display = 'flex';
+      document.getElementById('adam-domains').style.display = 'none';
       
       // Set up clear chat button
       document.getElementById('clear-chat-btn').addEventListener('click', function() {
+        if (!confirm('Are you sure you want to clear the chat history?')) {
+          return;
+        }
+        
         // First send a request to clear chat session on server
         fetch('/clear_chat', {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json'
-          }
+          },
+          credentials: 'same-origin'
         })
-        .then(response => response.json())
+        .then(response => {
+          if (!response.ok) {
+            throw new Error('Network response was not ok');
+          }
+          return response.json();
+        })
         .then(data => {
           if (data.success) {
+            // Clear the messages container
+            const messagesContainer = document.querySelector('.messages');
+            
             // Use welcome HTML from server if available
             if (data.welcome_html) {
-              document.querySelector('.messages').innerHTML = data.welcome_html;
+              messagesContainer.innerHTML = data.welcome_html;
             } else {
               // Fallback if server doesn't provide welcome HTML
-              document.querySelector('.messages').innerHTML = `
+              messagesContainer.innerHTML = `
                 <div class="welcome-message">
-                  <h3>Chat history cleared</h3>
-                  <p>You can start a new conversation.</p>
+                  <h3>Welcome to the CDISC Standards Assistant</h3>
+                  <p>I can help you with:</p>
+                  <ul>
+                    <li>Converting source data into SDTM/ADaM standards</li>
+                    <li>Creating dbt models and SQL transformations for clinical data</li>
+                    <li>Implementing RECIST criteria and oncology-specific analyses</li>
+                    <li>Designing ADaM datasets for efficacy and safety analysis</li>
+                  </ul>
+                  <p>Try asking:</p>
+                  <div class="example-queries">
+                    <div class="example-query" id="ex-1">"Tell me about the DM domain structure and purpose"</div>
+                    <div class="example-query" id="ex-2">"Explain the key variables in the ADSL domain"</div>
+                    <div class="example-query" id="ex-3">"Generate code to map lab data to SDTM LB domain with explanation"</div>
+                  </div>
+                  
+                  <p class="prompt-tip">For best results, ask for explanations about domains before requesting code.</p>
                 </div>
               `;
             }
             
-            // Re-bind the example query click handlers
-            document.querySelectorAll('.example-query').forEach(example => {
+            // Re-bind example query click handlers
+            messagesContainer.querySelectorAll('.example-query').forEach(example => {
               example.addEventListener('click', function() {
                 document.getElementById('message-input').value = this.textContent.replace(/^\"|\"$/g, '');
               });
             });
+
+            // Clear the message input
+            document.getElementById('message-input').value = '';
           } else {
             console.error('Failed to clear chat history:', data.message);
+            alert('Failed to clear chat history. Please try again.');
           }
         })
         .catch(error => {
           console.error('Error clearing chat history:', error);
+          alert('Error clearing chat history. Please check console for details.');
         });
       });
       

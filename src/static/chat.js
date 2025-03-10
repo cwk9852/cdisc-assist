@@ -1,82 +1,79 @@
+/**
+ * Format all messages when the page loads - called from body onload
+ */
+function formatMessagesOnLoad() {
+  console.log('Formatting messages on page load');
+  
+  // Process all assistant messages first
+  const assistantMessages = document.querySelectorAll('.assistant-message');
+  console.log('Found assistant messages:', assistantMessages.length);
+  
+  assistantMessages.forEach(message => {
+    try {
+      const rawContent = message.getAttribute('data-raw') || message.textContent;
+      if (!rawContent || rawContent === 'Processing...') return;
+
+      // Apply markdown formatting
+      message.innerHTML = formatContent(rawContent);
+      
+      // Apply syntax highlighting to code blocks
+      message.querySelectorAll('pre code').forEach(block => {
+        if (!block.classList.contains('highlighted')) {
+          hljs.highlightElement(block);
+          block.classList.add('highlighted');
+        }
+      });
+
+      // Add copy functionality to code blocks
+      message.querySelectorAll('.copy-btn').forEach(btn => {
+        if (!btn.hasAttribute('listener-added')) {
+          btn.setAttribute('listener-added', 'true');
+          btn.addEventListener('click', function() {
+            const codeBlock = this.closest('.code-block');
+            const code = codeBlock?.querySelector('pre code');
+            if (code) {
+              navigator.clipboard.writeText(code.textContent)
+                .then(() => {
+                  const originalText = this.textContent;
+                  this.textContent = 'Copied!';
+                  this.style.backgroundColor = '#4caf50';
+                  setTimeout(() => {
+                    this.textContent = originalText;
+                    this.style.backgroundColor = '';
+                  }, 1500);
+                });
+            }
+          });
+        }
+      });
+    } catch (e) {
+      console.error('Error formatting message:', e);
+    }
+  });
+
+  // Format user messages with simple line breaks
+  const userMessages = document.querySelectorAll('.user-message');
+  userMessages.forEach(message => {
+    try {
+      const content = message.textContent;
+      if (content) {
+        message.innerHTML = content.replace(/\n/g, '<br>');
+      }
+    } catch (e) {
+      console.error('Error formatting user message:', e);
+    }
+  });
+}
+
 document.addEventListener('DOMContentLoaded', function() {
   const form = document.querySelector('form');
   const messageInput = document.querySelector('#message-input');
   const messagesContainer = document.querySelector('.messages');
   const domainTooltip = document.getElementById('domain-info-tooltip');
   
-  // Configure marked.js for better performance
-  marked.setOptions({
-    gfm: true,             // GitHub Flavored Markdown
-    breaks: true,          // Convert \n to <br>
-    silent: true,          // Don't throw on error
-    smartLists: true,      // Use smarter list behavior
-    smartypants: false,    // Don't use "smart" typography punctuation
-    xhtml: false,          // Don't use self-closing tags
-    headerIds: false,      // Don't include ids in headers (faster)
-    mangle: false,         // Don't escape autolinks (faster)
-    pedantic: false,       // Don't be pedantic about spec conformance (faster)
-    async: false,          // Synchronous rendering (faster for our use case)
-  });
-  
-  // Simpler marked extension with minimal transformations to avoid breaking rendering
-  const cleanExtension = {
-    name: 'cleanMarkdown',
-    level: 'block',
-    start(src) { return 0; },
-    tokenizer(src) {
-      // No need to create a token, just return undefined
-      return undefined;
-    },
-    renderer(token) {
-      return token.text;
-    }
-  };
-
-  marked.use({ extensions: [cleanExtension] });
-  
-  // Create a basic renderer with minimal customization to avoid bugs
-  const renderer = new marked.Renderer();
-  
-  // Only minimal styling for paragraphs
-  renderer.paragraph = function(text) {
-    if (text === '[object Object]') {
-      return '<p style="margin-bottom: 0.4em; line-height: 1.3;"></p>';
-    }
-    return '<p style="margin-bottom: 0.4em; line-height: 1.3;">' + text + '</p>';
-  };
-  
-  // Simple header with minimal styling
-  renderer.heading = function(text, level) {
-    if (text === '[object Object]' || typeof text === 'object') {
-      return '<h' + level + ' style="margin-top: 0.4em; margin-bottom: 0.3em;">Section Heading</h' + level + '>';
-    }
-    return '<h' + level + ' style="margin-top: 0.4em; margin-bottom: 0.3em;">' + text + '</h' + level + '>';
-  };
-  
-  // Simple list
-  renderer.list = function(body, ordered) {
-    const type = ordered ? 'ol' : 'ul';
-    return '<' + type + ' style="margin-top: 0.2em; margin-bottom: 0.2em; padding-left: 1.2em;">' + 
-           body + '</' + type + '>';
-  };
-  
-  // Simple list item
-  renderer.listitem = function(text) {
-    if (text === '[object Object]') {
-      return '<li style="margin-bottom: 0.1em; line-height: 1.3;"></li>';
-    }
-    return '<li style="margin-bottom: 0.1em; line-height: 1.3;">' + text + '</li>';
-  };
-  
-  // Simple table
-  renderer.table = function(header, body) {
-    return '<table style="font-size: 0.9em; border-collapse: collapse; margin: 0.5em 0;">' +
-           '<thead>' + header + '</thead>' +
-           '<tbody>' + body + '</tbody>' +
-           '</table>';
-  };
-  
-  marked.use({ renderer });
+  // Initialize micromark for markdown rendering
+  const micromarkAvailable = typeof micromark !== 'undefined';
+  console.log('Micromark available:', micromarkAvailable);
 
   form.addEventListener('submit', function(e) {
       e.preventDefault();
@@ -84,9 +81,11 @@ document.addEventListener('DOMContentLoaded', function() {
       const userMessage = messageInput.value.trim();
       if (!userMessage) return;
 
+      // Add user message with proper styling
       appendMessage('User', userMessage, 'user-message');
       messageInput.value = '';
 
+      // Show processing message with spinner
       const processingId = appendMessage('Assistant', 'Processing...', 'assistant-message');
 
       fetch('/chat', {
@@ -122,8 +121,7 @@ document.addEventListener('DOMContentLoaded', function() {
       const welcomeMessage = document.querySelector('.welcome-message');
       if (welcomeMessage) welcomeMessage.remove();
 
-      // We don't need sender labels anymore, but keep the class for styling
-      // Create message element directly without the roleEl
+      // Create message element
       const messageEl = document.createElement('div');
       messageEl.classList.add(className, sender.toLowerCase() + '-container');
       messageEl.dataset.id = Date.now();
@@ -131,12 +129,10 @@ document.addEventListener('DOMContentLoaded', function() {
       // Ensure content is a string
       if (typeof content !== 'string') {
           console.warn('Non-string content received in appendMessage:', content);
-          // Try to safely convert to string
           try {
               if (content === null || content === undefined) {
                   content = '';
               } else if (typeof content === 'object') {
-                  // Try to JSON stringify if it's an object
                   content = JSON.stringify(content, null, 2);
               } else {
                   content = String(content);
@@ -152,7 +148,7 @@ document.addEventListener('DOMContentLoaded', function() {
           messageEl.textContent = content;
           messageEl.innerHTML = messageEl.innerHTML.replace(/\n/g, '<br>');
       } 
-      // For assistant processing message, show spinner - without hardcoded ellipsis
+      // For assistant processing message, show spinner
       else if (content === 'Processing...') {
           messageEl.innerHTML = `
               <div class="loading-container">
@@ -161,52 +157,49 @@ document.addEventListener('DOMContentLoaded', function() {
               </div>
           `;
       }
-      // For assistant messages, use the same markdown/code handling as updateMessage
-      else if (content.includes('```')) {
-          // Handle in updateMessage through initial content
-          messageEl.textContent = content;
-      }
+      // For normal assistant messages
       else {
-          // Use the same direct HTML approach for better reliability
           try {
-              let html = '';
-              const lines = content.split('\n');
+              // Use our unified formatter for consistency
+              messageEl.innerHTML = formatContent(content);
               
-              for (let i = 0; i < lines.length; i++) {
-                  const line = lines[i];
-                  
-                  // Check if it's a heading
-                  if (line.startsWith('#')) {
-                      const level = line.match(/^#+/)[0].length;
-                      const text = line.substring(level).trim();
-                      html += `<h${level} style="margin: 0.4em 0">${text}</h${level}>`;
+              // Apply code highlighting if any
+              messageEl.querySelectorAll('pre code').forEach(block => {
+                  if (!block.classList.contains('highlighted')) {
+                      hljs.highlightElement(block);
+                      block.classList.add('highlighted');
                   }
-                  // Check if it's a list item
-                  else if (line.match(/^\s*[-*+]\s/)) {
-                      // Start a list if we're not already in one
-                      if (i === 0 || !lines[i-1].match(/^\s*[-*+]\s/)) {
-                          html += '<ul style="margin: 0.2em 0; padding-left: 1.2em">';
-                      }
-                      
-                      const text = line.replace(/^\s*[-*+]\s/, '');
-                      html += `<li>${text}</li>`;
-                      
-                      // End list if next line is not a list item
-                      if (i === lines.length - 1 || !lines[i+1].match(/^\s*[-*+]\s/)) {
-                          html += '</ul>';
-                      }
-                  }
-                  // Just a normal paragraph
-                  else if (line.trim() !== '') {
-                      html += `<p style="margin: 0.4em 0">${line}</p>`;
-                  }
-                  // Empty line - add some space
-                  else if (line.trim() === '') {
-                      html += '<div style="height: 0.5em"></div>';
-                  }
-              }
+              });
               
-              messageEl.innerHTML = html;
+              // Add copy functionality to code blocks
+              messageEl.querySelectorAll('.copy-btn').forEach(btn => {
+                  if (!btn.hasAttribute('listener-added')) {
+                      btn.setAttribute('listener-added', 'true');
+                      btn.addEventListener('click', function() {
+                          const codeBlock = this.closest('.code-block');
+                          const codeElement = codeBlock?.querySelector('pre code');
+                          if (codeElement) {
+                              navigator.clipboard.writeText(codeElement.textContent)
+                                .then(() => {
+                                  // Visual feedback
+                                  const originalText = this.textContent;
+                                  this.textContent = 'Copied!';
+                                  this.style.backgroundColor = '#4caf50';
+                                  this.style.color = 'white';
+                                  
+                                  setTimeout(() => {
+                                    this.textContent = originalText;
+                                    this.style.backgroundColor = '';
+                                    this.style.color = '#2563eb';
+                                  }, 1500);
+                                })
+                                .catch(err => {
+                                  console.error('Failed to copy:', err);
+                                });
+                          }
+                      });
+                  }
+              });
           } catch (e) {
               console.error('Error formatting content:', e);
               // Very basic fallback
@@ -221,25 +214,460 @@ document.addEventListener('DOMContentLoaded', function() {
       return messageEl.dataset.id;
   }
 
-  // Simple helper function to clean markdown - minimal changes to avoid breaking rendering
-  function cleanMarkdown(content) {
+  /**
+   * Modern markdown renderer that uses micromark if available, falls back to custom parser
+   */
+  function formatContent(content) {
       if (typeof content !== 'string') {
           return "Error: Non-string content received";
       }
       
-      // Remove all [object Object] occurrences
+      // Basic cleanup
       content = content.replace(/\[object Object\]/g, '');
-      
-      // Remove "Section Header" text (which might be inserted by fallbacks)
       content = content.replace(/Section Header/g, '');
+      content = content.replace(/undefined/g, '');
       
-      // Clean up excess newlines - replace 3+ newlines with 2
-      content = content.replace(/\n{3,}/g, '\n\n');
+      // Extract code blocks first to protect them from markdown processing
+      const codeBlocks = [];
+      content = content.replace(/```([\s\S]*?)```/g, function(match, codeContent) {
+          const placeholder = `__CODE_BLOCK_${codeBlocks.length}__`;
+          codeBlocks.push(match);
+          return placeholder;
+      });
+
+      // Always use custom parser since it handles CDISC-specific formatting better
+      let html = customMarkdownParser(content);
       
-      // Fix any headers that might end up empty after object removal
-      content = content.replace(/^(#{1,6})\s*$/gm, '');
+      // Restore code blocks
+      html = html.replace(/__CODE_BLOCK_(\d+)__/g, function(match, index) {
+          const codeBlock = codeBlocks[parseInt(index, 10)];
+          if (!codeBlock) return match;
+          
+          // Parse the code block
+          const match1 = codeBlock.match(/```(?:(\w+)\n)?([\s\S]*?)```/);
+          if (match1) {
+              const language = match1[1] || '';
+              const code = match1[2];
+              return formatCodeBlock(language, code);
+          }
+          return match;
+      });
       
-      return content;
+      // Add target="_blank" to all external links
+      html = html.replace(/<a href="(https?:\/\/[^"]+)">/g, '<a href="$1" target="_blank" rel="noopener noreferrer">');
+      
+      return html;
+  }
+  
+  /**
+   * Custom markdown parser as a fallback when micromark is unavailable
+   * Enhanced for CDISC-specific formatting and better handling of complex markdown
+   */
+  function customMarkdownParser(content) {
+      let html = '';
+      const lines = content.split('\n');
+      let i = 0;
+      let inList = false;
+      let inOrderedList = false;
+      let inBlockquote = false;
+      let inTable = false;
+      let tableHeaders = [];
+      let tableAlignments = [];
+      
+      while (i < lines.length) {
+          const line = lines[i].trim();
+          
+          // Skip empty placeholder lines for code blocks (they'll be restored later)
+          if (line.match(/^__CODE_BLOCK_\d+__$/)) {
+              html += line;
+              i++;
+              continue;
+          }
+          
+          // Headers
+          if (line.startsWith('#')) {
+              // Close any open structures before a heading
+              if (inList) {
+                  html += inOrderedList ? '</ol>' : '</ul>';
+                  inList = false;
+                  inOrderedList = false;
+              }
+              if (inBlockquote) {
+                  html += '</blockquote>';
+                  inBlockquote = false;
+              }
+              if (inTable) {
+                  html += '</tbody></table>';
+                  inTable = false;
+              }
+              
+              const match = line.match(/^(#{1,6})\s+(.+)$/);
+              if (match) {
+                  const level = match[1].length;
+                  const text = match[2];
+                  const formattedText = processInlineFormatting(text);
+                  html += `<h${level} style="margin: 0.7em 0 0.3em 0; font-weight: 600; color: #1f2328;">${formattedText}</h${level}>`;
+              }
+          }
+          // Horizontal rule
+          else if (line.match(/^(\*{3,}|-{3,}|_{3,})$/)) {
+              // Close any open structures
+              if (inList) {
+                  html += inOrderedList ? '</ol>' : '</ul>';
+                  inList = false;
+                  inOrderedList = false;
+              }
+              if (inBlockquote) {
+                  html += '</blockquote>';
+                  inBlockquote = false;
+              }
+              if (inTable) {
+                  html += '</tbody></table>';
+                  inTable = false;
+              }
+              
+              html += '<hr style="height: 0.25em; padding: 0; margin: 1.5em 0; background-color: #d0d7de; border: 0; border-radius: 2px;">';
+          }
+          // Table - header row (starts with | and contains |)
+          else if (line.startsWith('|') && line.endsWith('|') && line.includes('|', 1)) {
+              // Close any open structures before starting a table
+              if (inList) {
+                  html += inOrderedList ? '</ol>' : '</ul>';
+                  inList = false;
+                  inOrderedList = false;
+              }
+              if (inBlockquote) {
+                  html += '</blockquote>';
+                  inBlockquote = false;
+              }
+              
+              // Start a new table if we're not in one already
+              if (!inTable) {
+                  html += '<table style="border-collapse: collapse; margin: 1em 0; width: 100%; overflow: auto; font-size: 0.9em; border-radius: 6px; box-shadow: 0 0 0 1px #d0d7de;">';
+                  inTable = true;
+                  
+                  // Process the header row
+                  const headerCells = line.slice(1, -1).split('|').map(cell => cell.trim());
+                  tableHeaders = headerCells;
+                  
+                  // Check if the next line is a separator row with dashes
+                  if (i + 1 < lines.length && lines[i + 1].trim().startsWith('|') && 
+                      lines[i + 1].trim().includes('-')) {
+                      
+                      // Get alignment from separator row
+                      const alignmentRow = lines[i + 1].trim().slice(1, -1).split('|');
+                      tableAlignments = alignmentRow.map(cell => {
+                          const trimmed = cell.trim();
+                          if (trimmed.startsWith(':') && trimmed.endsWith(':')) return 'center';
+                          if (trimmed.endsWith(':')) return 'right';
+                          return 'left';
+                      });
+                      
+                      // Skip the separator row
+                      i++;
+                  } else {
+                      // Default alignment to left if no separator row
+                      tableAlignments = Array(headerCells.length).fill('left');
+                  }
+                  
+                  // Add table header
+                  html += '<thead><tr>';
+                  for (let j = 0; j < tableHeaders.length; j++) {
+                      const align = tableAlignments[j] || 'left';
+                      const formattedCell = processInlineFormatting(tableHeaders[j]);
+                      html += `<th style="padding: 6px 13px; border: 1px solid #d0d7de; text-align: ${align}; font-weight: 600; background-color: #f6f8fa;">${formattedCell}</th>`;
+                  }
+                  html += '</tr></thead><tbody>';
+              } else {
+                  // Process a regular table row
+                  const cells = line.slice(1, -1).split('|').map(cell => cell.trim());
+                  html += '<tr>';
+                  for (let j = 0; j < cells.length; j++) {
+                      const align = tableAlignments[j] || 'left';
+                      const formattedCell = processInlineFormatting(cells[j]);
+                      html += `<td style="padding: 6px 13px; border: 1px solid #d0d7de; text-align: ${align};">${formattedCell}</td>`;
+                  }
+                  html += '</tr>';
+              }
+          }
+          // Ordered list items - match numbers like 1. or 1)
+          else if (line.match(/^\s*\d+[.)]\s/)) {
+              // Close blockquote or table if open
+              if (inBlockquote) {
+                  html += '</blockquote>';
+                  inBlockquote = false;
+              }
+              if (inTable) {
+                  html += '</tbody></table>';
+                  inTable = false;
+              }
+              
+              // If we're in a list already but with different type
+              if (inList && !inOrderedList) {
+                  html += '</ul>';
+                  inList = false;
+              }
+              
+              // Start a new ordered list
+              if (!inList) {
+                  html += '<ol style="margin: 0.5em 0; padding-left: 1.5em;">';
+                  inList = true;
+                  inOrderedList = true;
+              }
+              
+              const text = line.replace(/^\s*\d+[.)]\s/, '');
+              const formattedText = processInlineFormatting(text);
+              html += `<li style="margin-bottom: 0.3em;">${formattedText}</li>`;
+              
+              // Check if we should end the list
+              if (i === lines.length - 1 || 
+                  !lines[i+1].trim().match(/^\s*\d+[.)]\s/) && 
+                  !lines[i+1].trim().match(/^\s*[-*+]\s/)) {
+                  html += '</ol>';
+                  inList = false;
+                  inOrderedList = false;
+              }
+          }
+          // Unordered list items
+          else if (line.match(/^\s*[-*+]\s/)) {
+              // Close blockquote or table if open
+              if (inBlockquote) {
+                  html += '</blockquote>';
+                  inBlockquote = false;
+              }
+              if (inTable) {
+                  html += '</tbody></table>';
+                  inTable = false;
+              }
+              
+              // If we're in a list already but with different type
+              if (inList && inOrderedList) {
+                  html += '</ol>';
+                  inList = false;
+              }
+              
+              // Start a new unordered list
+              if (!inList) {
+                  html += '<ul style="margin: 0.5em 0; padding-left: 1.5em;">';
+                  inList = true;
+                  inOrderedList = false;
+              }
+              
+              const text = line.replace(/^\s*[-*+]\s/, '');
+              const formattedText = processInlineFormatting(text);
+              html += `<li style="margin-bottom: 0.3em;">${formattedText}</li>`;
+              
+              // Check if we should end the list
+              if (i === lines.length - 1 || 
+                  !lines[i+1].trim().match(/^\s*[-*+]\s/) && 
+                  !lines[i+1].trim().match(/^\s*\d+[.)]\s/)) {
+                  html += '</ul>';
+                  inList = false;
+              }
+          }
+          // Blockquote
+          else if (line.startsWith('>')) {
+              // Close any open structures except blockquotes
+              if (inList) {
+                  html += inOrderedList ? '</ol>' : '</ul>';
+                  inList = false;
+                  inOrderedList = false;
+              }
+              if (inTable) {
+                  html += '</tbody></table>';
+                  inTable = false;
+              }
+              
+              // Start a new blockquote if needed
+              if (!inBlockquote) {
+                  html += '<blockquote style="padding: 0.5em 1em; color: #57606a; background-color: #f6f8fa; border-left: 0.25em solid #d0d7de; margin: 1em 0; border-radius: 0 3px 3px 0;">';
+                  inBlockquote = true;
+              }
+              
+              const text = line.substring(1).trim();
+              const formattedText = processInlineFormatting(text);
+              
+              // Add paragraph inside blockquote
+              html += `<p style="margin: 0.4em 0;">${formattedText}</p>`;
+              
+              // Check if we should end the blockquote
+              if (i === lines.length - 1 || !lines[i+1].trim().startsWith('>')) {
+                  html += '</blockquote>';
+                  inBlockquote = false;
+              }
+          }
+          // CDISC-specific special sections - start with !!! and contain info, warning, etc.
+          else if (line.match(/^!{3}\s*(info|warning|success|error|note)/i)) {
+              // Close any open structures
+              if (inList) {
+                  html += inOrderedList ? '</ol>' : '</ul>';
+                  inList = false;
+                  inOrderedList = false;
+              }
+              if (inBlockquote) {
+                  html += '</blockquote>';
+                  inBlockquote = false;
+              }
+              if (inTable) {
+                  html += '</tbody></table>';
+                  inTable = false;
+              }
+              
+              const match = line.match(/^!{3}\s*(info|warning|success|error|note)/i);
+              const boxType = match[1].toLowerCase();
+              
+              // Determine style based on box type
+              let boxStyle, boxTitle;
+              switch (boxType) {
+                  case 'info':
+                      boxStyle = 'background-color: #f6f8fa; border-left-color: #0969da;';
+                      boxTitle = 'Information';
+                      break;
+                  case 'warning':
+                      boxStyle = 'background-color: #fff8c5; border-left-color: #e36209;';
+                      boxTitle = 'Warning';
+                      break;
+                  case 'success':
+                      boxStyle = 'background-color: #dafbe1; border-left-color: #2da44e;';
+                      boxTitle = 'Success';
+                      break;
+                  case 'error':
+                      boxStyle = 'background-color: #ffebe9; border-left-color: #cf222e;';
+                      boxTitle = 'Error';
+                      break;
+                  case 'note':
+                  default:
+                      boxStyle = 'background-color: #f6f9fc; border-left-color: #6b7f99;';
+                      boxTitle = 'Note';
+              }
+              
+              // Extract custom title if provided after the box type (e.g., !!! info: Custom Title)
+              const titleMatch = line.match(/^!{3}\s*[a-z]+:(.+)$/i);
+              if (titleMatch && titleMatch[1].trim()) {
+                  boxTitle = titleMatch[1].trim();
+              }
+              
+              // Start box with the title
+              html += `<div class="${boxType}-box" style="padding: 12px 16px; margin: 1em 0; border-radius: 6px; border-left: 4px solid; ${boxStyle}">`;
+              html += `<strong>${boxTitle}</strong>`;
+              
+              // Look ahead for content indented under this box
+              let j = i + 1;
+              while (j < lines.length && (lines[j].trim() === '' || lines[j].match(/^\s+/))) {
+                  if (lines[j].trim() !== '') {
+                      const boxContent = lines[j].trim();
+                      const formattedBoxContent = processInlineFormatting(boxContent);
+                      html += `<p style="margin: 0.4em 0;">${formattedBoxContent}</p>`;
+                  }
+                  j++;
+              }
+              
+              // Close the box
+              html += '</div>';
+              
+              // Skip the processed lines
+              i = j - 1;
+          }
+          // Paragraphs (non-empty lines)
+          else if (line !== '') {
+              // Close any open structures before starting a paragraph
+              if (inList) {
+                  html += inOrderedList ? '</ol>' : '</ul>';
+                  inList = false;
+                  inOrderedList = false;
+              }
+              if (inBlockquote) {
+                  html += '</blockquote>';
+                  inBlockquote = false;
+              }
+              if (inTable) {
+                  html += '</tbody></table>';
+                  inTable = false;
+              }
+              
+              // Process inline formatting in paragraphs
+              const formattedText = processInlineFormatting(line);
+              html += `<p style="margin: 0.5em 0; line-height: 1.5;">${formattedText}</p>`;
+          }
+          // Empty lines - add spacing unless in certain structures
+          else if (!inList && !inBlockquote && !inTable) {
+              html += '<div style="height: 0.5em;"></div>';
+          }
+          
+          i++;
+      }
+      
+      // Close any open structures at the end
+      if (inList) {
+          html += inOrderedList ? '</ol>' : '</ul>';
+      }
+      if (inBlockquote) {
+          html += '</blockquote>';
+      }
+      if (inTable) {
+          html += '</tbody></table>';
+      }
+      
+      return html;
+  }
+  
+  /**
+   * Process inline formatting (bold, italic, code, links) with CDISC-specific enhancements
+   */
+  function processInlineFormatting(text) {
+      if (!text) return '';
+      
+      // Process links first - [text](url)
+      text = text.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>');
+      
+      // CDISC-specific formatting - highlight domain codes (standard CDISC domains)
+      // Don't match inside code blocks or already processed elements
+      text = text.replace(/\b([A-Z]{2,4})\b(?![^<]*>)/g, (match, domain) => {
+          // Official CDISC domains (SDTM + ADaM)
+          const cdiscDomains = [
+              // SDTM Study Data Domains
+              "DM", "AE", "CM", "EX", "LB", "VS", "MH", "DS", "SV", "SE", "TS", 
+              "RS", "TU", "TR", "EC", "SU", "RE", "PC", "PP", "MI", "SC", "FA", 
+              "IS", "QS", "FT", "RP", "DV", "CO", "PR", "DD", "CE", "DI", "AG",
+              // SDTM Special-Purpose Domains
+              "TA", "TE", "TV", "TI", "TD", "TJ", "TX", "MS", "NS", "SM", "SS", "SR",
+              // ADaM Standard Domains
+              "ADSL", "ADAE", "ADCM", "ADLB", "ADVS", "ADEX", "ADEG", "ADMH", "ADRS", 
+              "ADPR", "ADPC", "ADPP", "ADQS", "ADTR", "ADTTE", "ADCE", "ADHY", "ADLBHY", 
+              "ADQLQC", "ADIS", "ADQSADAS", "ADQLQCCIBIC"
+          ];
+          
+          if (cdiscDomains.includes(domain)) {
+              return `<span class="cdisc-domain">${domain}</span>`;
+          }
+          return match;
+      });
+      
+      // CDISC-specific formatting - highlight CORE variables from CDISC standards
+      text = text.replace(/\b([A-Z]{2,8}(?:ID|DTC|STRT|END|DY|FL|SEQ|TERM|DECOD|CAT|BODSYS|SCAT|SPID|NAM|SPEC|REAS|REASND|LNKID|DSDECOD|VISIT|TEST|TESTCD|STRES|STRESC|ORRES|ORRESU))\b(?![^<]*>)/g, 
+          '<span class="cdisc-variable">$1</span>');
+          
+      // Special highlighting for highly important CORE identifiers
+      text = text.replace(/\b(STUDYID|USUBJID|SUBJID|DOMAIN|DTHDTC|DTHFL|SITEID|VISITNUM|EPOCH|ARM|ARMCD|ACTARM|ACTARMCD|SPDEVID|LBSEQ|LBTESTCD|LBTEST|LBCAT|LBORRES|LBORRESU|LBORNRLO|LBORNRHI|LBSTRESC|LBSTRESN|LBSTRESU|LBSTNRLO|LBSTNRHI|VISIT|VISITNUM|AEDECOD|AESTDTC|AEENDTC|AETERM|AESEV|AESER|AESDTH)\b(?![^<]*>)/g,
+          '<span class="cdisc-variable" style="font-weight:bold;">$1</span>');
+      
+      // Process code before bold/italic to avoid interference
+      text = text.replace(/`([^`]+)`/g, '<code class="md-inline-code" style="background-color: #f5f5f5; padding: 2px 4px; border-radius: 3px; font-family: monospace;">$1</code>');
+      
+      // Handle bold and italic combinations carefully
+      // First handle bold+italic
+      text = text.replace(/\*\*\*([^*]+)\*\*\*/g, '<strong><em>$1</em></strong>');
+      text = text.replace(/___([^_]+)___/g, '<strong><em>$1</em></strong>');
+      
+      // Then handle bold
+      text = text.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+      text = text.replace(/__([^_]+)__/g, '<strong>$1</strong>');
+      
+      // Then handle italic
+      text = text.replace(/\*([^*]+)\*/g, '<em>$1</em>');
+      text = text.replace(/_([^_]+)_/g, '<em>$1</em>');
+      
+      return text;
   }
   
   function updateMessage(id, content) {
@@ -250,12 +678,10 @@ document.addEventListener('DOMContentLoaded', function() {
       // Ensure content is a string
       if (typeof content !== 'string') {
           console.warn('Non-string content received:', content);
-          // Try to safely convert to string
           try {
               if (content === null || content === undefined) {
                   content = '';
               } else if (typeof content === 'object') {
-                  // Try to JSON stringify if it's an object
                   content = JSON.stringify(content, null, 2);
               } else {
                   content = String(content);
@@ -266,154 +692,228 @@ document.addEventListener('DOMContentLoaded', function() {
           }
       }
       
-      // Clean up markdown content
-      content = cleanMarkdown(content);
-      
       for (const message of messages) {
           if (message.dataset.id === id) {
-              // Check if content has code blocks
-              if (content.includes('```')) {
-                  console.log('Message contains code blocks');
+              try {
+                  // Apply our simplified formatter
+                  message.innerHTML = formatContent(content);
                   
-                  // More direct approach to handle code blocks
-                  let parts = [];
-                  let lastIndex = 0;
-                  
-                  // Simple regex to find code blocks
-                  const codeBlockRegex = /```(sql|python|r)?\s*\n([\s\S]*?)```/g;
-                  let match;
-                  
-                  // Find each code block and process text before it
-                  while ((match = codeBlockRegex.exec(content)) !== null) {
-                      // Process text before code block with markdown
-                      if (match.index > lastIndex) {
-                          const textBefore = content.substring(lastIndex, match.index);
-                          parts.push({ type: 'text', content: textBefore });
+                  // Apply code highlighting
+                  message.querySelectorAll('pre code').forEach(block => {
+                      if (!block.classList.contains('highlighted')) {
+                          hljs.highlightElement(block);
+                          block.classList.add('highlighted');
                       }
-                      
-                      // Process code block
-                      const language = match[1] || 'sql';
-                      const code = match[2].trim();
-                      parts.push({ type: 'code', language: language, content: code });
-                      
-                      // Update lastIndex to after this code block
-                      lastIndex = match.index + match[0].length;
-                  }
+                  });
                   
-                  // Process any remaining text after the last code block
-                  if (lastIndex < content.length) {
-                      const textAfter = content.substring(lastIndex);
-                      parts.push({ type: 'text', content: textAfter });
-                  }
-                  
-                  // Build the final HTML
-                  let finalHTML = '';
-                  for (const part of parts) {
-                      if (part.type === 'text') {
-                          // Apply markdown to text parts
-                          try {
-                              finalHTML += marked.parse(part.content);
-                          } catch (e) {
-                              console.error('Error parsing markdown:', e);
-                              finalHTML += part.content.replace(/\n/g, '<br>');
-                          }
-                      } else if (part.type === 'code') {
-                          // Format code blocks
-                          finalHTML += formatCodeBlock(part.language, part.content);
-                      }
-                  }
-                  
-                  message.innerHTML = finalHTML;
-              } else {
-                  // For messages without code, apply simpler formatting
-                  try {
-                      // Use a more direct HTML approach for better reliability
-                      let html = '';
-                      const lines = content.split('\n');
-                      
-                      for (let i = 0; i < lines.length; i++) {
-                          const line = lines[i];
-                          
-                          // Check if it's a heading
-                          if (line.startsWith('#')) {
-                              const level = line.match(/^#+/)[0].length;
-                              const text = line.substring(level).trim();
-                              html += `<h${level} style="margin: 0.4em 0">${text}</h${level}>`;
-                          }
-                          // Check if it's a list item
-                          else if (line.match(/^\s*[-*+]\s/)) {
-                              // Start a list if we're not already in one
-                              if (i === 0 || !lines[i-1].match(/^\s*[-*+]\s/)) {
-                                  html += '<ul style="margin: 0.2em 0; padding-left: 1.2em">';
+                  // Add copy functionality
+                  message.querySelectorAll('.copy-btn').forEach(btn => {
+                      if (!btn.hasAttribute('listener-added')) {
+                          btn.setAttribute('listener-added', 'true');
+                          btn.addEventListener('click', function() {
+                              // Find pre and code elements relative to the current button
+                              const codeContainer = this.closest('div');
+                              const codeElement = codeContainer.querySelector('pre code');
+                              if (codeElement) {
+                                  navigator.clipboard.writeText(codeElement.textContent);
+                                  
+                                  // Visual feedback
+                                  const originalText = this.textContent;
+                                  this.textContent = 'Copied!';
+                                  setTimeout(() => {
+                                      this.textContent = originalText;
+                                  }, 1500);
                               }
-                              
-                              const text = line.replace(/^\s*[-*+]\s/, '');
-                              html += `<li>${text}</li>`;
-                              
-                              // End list if next line is not a list item
-                              if (i === lines.length - 1 || !lines[i+1].match(/^\s*[-*+]\s/)) {
-                                  html += '</ul>';
-                              }
-                          }
-                          // Just a normal paragraph
-                          else if (line.trim() !== '') {
-                              html += `<p style="margin: 0.4em 0">${line}</p>`;
-                          }
-                          // Empty line - add some space
-                          else {
-                              html += '<div style="height: 0.5em"></div>';
-                          }
+                          });
                       }
-                      
-                      message.innerHTML = html;
-                  } catch (e) {
-                      console.error('Error formatting content:', e);
-                      // Very basic fallback
-                      message.textContent = content;
-                      message.innerHTML = message.innerHTML.replace(/\n/g, '<br>');
-                  }
+                  });
+                  
+                  messagesContainer.scrollTop = messagesContainer.scrollHeight;
+              } catch (e) {
+                  console.error('Error formatting message:', e);
+                  // Fallback to basic formatting
+                  message.textContent = content;
+                  message.innerHTML = message.innerHTML.replace(/\n/g, '<br>');
               }
               
-              // Apply highlighting to any inline code that was missed
-              message.querySelectorAll('code:not(.hljs)').forEach(block => {
-                  if (!block.classList.contains('highlighted') && block.parentElement.tagName !== 'PRE') {
-                      hljs.highlightElement(block);
-                      block.classList.add('highlighted');
-                  }
-              });
-              
-              messagesContainer.scrollTop = messagesContainer.scrollHeight;
-              console.timeEnd('updateMessage');
               found = true;
+              console.timeEnd('updateMessage');
               break;
           }
       }
+      
       if (!found) {
           console.error('Could not find message with ID:', id);
           appendMessage('Assistant', content, 'assistant-message');
       }
   }
   
-  // Format a single code block with syntax highlighting - simplified for reliability
+  /**
+   * Format all existing messages in the chat history when the page loads
+   */
+  function formatMessagesOnLoad() {
+    console.log('Formatting all messages on page load');
+    
+    // 1. Process any user messages - simple formatting
+    const userMessages = document.querySelectorAll('.user-message');
+    userMessages.forEach(message => {
+      try {
+        const rawContent = message.textContent.trim();
+        // Basic line break formatting for user messages
+        message.innerHTML = rawContent.replace(/\n/g, '<br>');
+      } catch (e) {
+        console.error('Error formatting user message:', e);
+      }
+    });
+    
+    // 2. Process all assistant messages - full markdown and code formatting
+    const assistantMessages = document.querySelectorAll('.assistant-message');
+    console.log('Found assistant messages:', assistantMessages.length);
+    
+    // Process each assistant message
+    assistantMessages.forEach(message => {
+      try {
+        // Get the raw content
+        const rawContent = message.textContent.trim();
+        if (!rawContent) return;
+        
+        console.log('Processing message with content length:', rawContent.length);
+        
+        // Skip "Processing..." message
+        if (rawContent === 'Processing...') return;
+        
+        // Apply our markdown renderer - always reapply on page load
+        message.innerHTML = formatContent(rawContent);
+        
+        // Apply code highlighting
+        message.querySelectorAll('pre code').forEach(block => {
+          try {
+            hljs.highlightElement(block);
+            block.classList.add('highlighted');
+          } catch (err) {
+            console.error('Error highlighting code:', err);
+          }
+        });
+        
+        // Add copy functionality to code blocks
+        message.querySelectorAll('.copy-btn').forEach(btn => {
+          if (!btn.hasAttribute('listener-added')) {
+            btn.setAttribute('listener-added', 'true');
+            btn.addEventListener('click', function() {
+              const codeBlock = this.closest('.code-block');
+              const codeElement = codeBlock?.querySelector('pre code');
+              if (codeElement) {
+                navigator.clipboard.writeText(codeElement.textContent)
+                  .then(() => {
+                    // Visual feedback
+                    const originalText = this.textContent;
+                    this.textContent = 'Copied!';
+                    this.style.backgroundColor = '#4caf50';
+                    this.style.color = 'white';
+                    
+                    setTimeout(() => {
+                      this.textContent = originalText;
+                      this.style.backgroundColor = '';
+                      this.style.color = '#2563eb';
+                    }, 1500);
+                  })
+                  .catch(err => {
+                    console.error('Failed to copy:', err);
+                  });
+              }
+            });
+          }
+        });
+      } catch (e) {
+        console.error('Error formatting assistant message:', e);
+      }
+    });
+  }
+  
+  /**
+   * Format all existing messages when the page loads
+   * Backwards compatibility function
+   */
+  function formatExistingMessages() {
+    formatMessagesOnLoad();
+  }
+  
+  /**
+   * Format a code block with modern styling, syntax highlighting, and copy functionality
+   */
   function formatCodeBlock(language, code) {
-      // Make sure we have a valid language
-      language = language || 'sql';
-      if (!language) language = 'sql';
+      // Normalize language and set defaults
+      language = (language || '').toLowerCase().trim();
       
-      // Create a very simple code block with minimal styling
-      return `<div style="margin: 0.6em 0; border: 1px solid #e0e0e0; border-radius: 4px; overflow: hidden;">
-          <div style="background-color: #f5f5f5; padding: 4px 8px; border-bottom: 1px solid #e0e0e0; display: flex; justify-content: space-between;">
-              <span style="font-weight: bold">${language.toUpperCase()}</span>
-              <button class="copy-btn" style="border: none; background: none; cursor: pointer; color: #1a73e8;">Copy</button>
+      // Map common languages to highlight.js supported languages
+      const languageMap = {
+          'sql': 'sql',
+          'python': 'python',
+          'py': 'python',
+          'r': 'r',
+          'plaintext': 'plaintext',
+          'text': 'plaintext',
+          'js': 'javascript',
+          'javascript': 'javascript',
+          'bash': 'bash',
+          'sh': 'bash',
+          'json': 'json',
+          'csv': 'plaintext',
+          'yaml': 'yaml',
+          'yml': 'yaml',
+          'xml': 'xml',
+          'html': 'html',
+          'css': 'css',
+          'cdisc': 'plaintext', // Custom CDISC format
+          'sas': 'plaintext',   // For SAS code
+          '': 'plaintext'       // Default
+      };
+      
+      // Use mapped language or fallback to plaintext
+      const hlLanguage = languageMap[language] || 'plaintext';
+      
+      // Trim trailing whitespace and remove excessive blank lines
+      code = code.trim().replace(/\n{3,}/g, '\n\n');
+      
+      // Sanitize the code content
+      const sanitizedCode = code
+          .replace(/&/g, "&amp;")
+          .replace(/</g, "&lt;")
+          .replace(/>/g, "&gt;")
+          .replace(/"/g, "&quot;")
+          .replace(/'/g, "&#039;");
+          
+      // Determine what icon to show based on language
+      let langIcon = '';
+      
+      if (language === 'sql') {
+          langIcon = '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right: 5px;"><path d="M12 2L22 8.5V15.5L12 22L2 15.5V8.5L12 2Z"></path><path d="M12 22V15.5"></path><path d="M22 8.5L12 15.5L2 8.5"></path><path d="M2 15.5L12 8.5L22 15.5"></path><path d="M12 2V8.5"></path></svg>';
+      } else if (language === 'python' || language === 'py') {
+          langIcon = '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right: 5px;"><path d="M12 2v6.5M12 22v-6.5"></path><path d="M6 8.5h12l-3 5.5"></path><path d="M16.5 10.5l1 2-4 6.5"></path><path d="M6 17l3.5-6"></path><circle cx="12" cy="8.5" r="6.5"></circle></svg>';
+      } else if (language === 'r') {
+          langIcon = '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right: 5px;"><path d="M4 10h16v4H4z"></path><path d="M16 14l4 6"></path><path d="M8 21h8"></path><path d="M12 3v18"></path><path d="M3 9a9 9 0 0 1 9-9 9 9 0 0 1 9 9"></path></svg>';
+      } else if (language === 'bash' || language === 'sh') {
+          langIcon = '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right: 5px;"><rect x="2" y="4" width="20" height="16" rx="2"></rect><path d="m8 10-2 2 2 2"></path><path d="M11 13h5"></path></svg>';
+      } else {
+          langIcon = '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right: 5px;"><polyline points="16 18 22 12 16 6"></polyline><polyline points="8 6 2 12 8 18"></polyline></svg>';
+      }
+      
+      // Create a clean, highly legible code block
+      return `<div class="code-block" style="margin: 1.2em 0; border: 1px solid #d1d5db; border-radius: 8px; overflow: hidden; box-shadow: 0 2px 6px rgba(0,0,0,0.07);">
+          <div style="background-color: #f8f9fa; padding: 8px 12px; border-bottom: 1px solid #e5e7eb; display: flex; justify-content: space-between; align-items: center;">
+              <div style="display: flex; align-items: center;">
+                  ${langIcon}
+                  <span style="font-weight: 500; font-size: 13px; color: #374151;">${language.toUpperCase() || 'CODE'}</span>
+              </div>
+              <button class="copy-btn" style="border: 1px solid #e5e7eb; background-color: white; cursor: pointer; color: #2563eb; font-size: 12px; display: flex; align-items: center; padding: 3px 8px; border-radius: 4px; transition: all 0.2s;">
+                  <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right: 4px;">
+                      <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+                      <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+                  </svg>
+                  Copy
+              </button>
           </div>
-          <pre style="margin: 0; padding: 8px; max-height: 300px; overflow: auto; font-size: 12px; line-height: 1.3;"><code class="${language}">${
-              // Basic HTML escaping
-              code.replace(/&/g, "&amp;")
-                  .replace(/</g, "&lt;")
-                  .replace(/>/g, "&gt;")
-                  .replace(/"/g, "&quot;")
-                  .replace(/'/g, "&#039;")
-          }</code></pre>
+          <pre style="margin: 0; padding: 16px; max-height: 400px; overflow: auto; font-size: 14px; line-height: 1.6; background-color: #ffffff; font-family: 'Consolas', 'Monaco', 'Courier New', monospace;"><code class="${hlLanguage}">${sanitizedCode}</code></pre>
       </div>`;
   }
 
@@ -488,13 +988,42 @@ document.addEventListener('DOMContentLoaded', function() {
           'ADTR': 'Create Best Overall Response analysis in ADTR domain'
       };
 
-      // Process domain variables for tooltip display
+      // Process domain variables for tooltip display with CDISC standard emphasis
       function formatVariables(varsString) {
           const varsList = varsString.split(', ');
           let varHtml = '';
-
+          
+          // List of REQUIRED variables by CDISC standards
+          const coreVariables = [
+              // General identifiers required in all domains
+              "STUDYID", "DOMAIN", "USUBJID", "SUBJID", 
+              
+              // Demographics core variables
+              "SITEID", "AGE", "SEX", "RACE", "ETHNIC", "COUNTRY", "DMDTC", "ARMCD", "ARM", 
+              
+              // AE core variables
+              "AESEQ", "AETERM", "AEDECOD", "AESTDTC", "AEENDTC", "AESEV", "AESER", "AESOC", "AEACN",
+              
+              // LB core variables
+              "LBSEQ", "LBTESTCD", "LBTEST", "LBCAT", "LBDTC", "LBORRES", "LBORRESU", "LBORNRLO", "LBORNRHI",
+              
+              // Other common core variables
+              "VISIT", "VISITNUM", "EPOCH",
+              
+              // ADaM core variables
+              "PARAMCD", "PARAM", "AVAL", "AVALC", "VISIT", "AVISIT", "AVISITN", "DTYPE", "TRTP", "TRTPN"
+          ];
+          
+          // Format each variable with special emphasis on CORE variables
           varsList.forEach(variable => {
-              varHtml += `<span>${variable}</span>`;
+              const trimmedVar = variable.trim();
+              if (coreVariables.includes(trimmedVar)) {
+                  // CORE variable formatting
+                  varHtml += `<span class="cdisc-core-var" title="CORE variable (required)">${trimmedVar}</span>`;
+              } else {
+                  // Regular variable formatting
+                  varHtml += `<span>${trimmedVar}</span>`;
+              }
           });
 
           return varHtml;
@@ -564,22 +1093,32 @@ document.addEventListener('DOMContentLoaded', function() {
                   if (data.success) {
                       // Reset UI with welcome HTML from server
                       if (data.welcome_html) {
-                          document.querySelector('.messages').innerHTML = data.welcome_html;
+                          const messagesContainer = document.querySelector('.messages');
+                          messagesContainer.innerHTML = data.welcome_html;
+                          
+                          // Re-bind the example query click handlers
+                          messagesContainer.querySelectorAll('.example-query').forEach(example => {
+                              example.addEventListener('click', function() {
+                                  document.getElementById('message-input').value = this.textContent.replace(/^\"|\"$/g, '');
+                              });
+                          });
                       } else {
                           // Fallback if no welcome HTML is provided
                           document.querySelector('.messages').innerHTML = `
-                <div class="welcome-message">
-                  <h3>Welcome to the CDISC Standards Assistant</h3>
-                  <p>Context has been reset successfully.</p>
-                </div>
-              `;
+                              <div class="welcome-message">
+                                  <h3>Welcome to the CDISC Standards Assistant</h3>
+                                  <p>Context has been reset successfully.</p>
+                              </div>
+                          `;
                       }
                   } else {
                       console.error('Failed to clear context:', data.message);
+                      alert('Error clearing chat context: ' + data.message);
                   }
               })
               .catch(error => {
                   console.error('Error clearing context:', error);
+                  alert('Error clearing chat context. Please try again.');
               });
           }
       });
@@ -587,4 +1126,149 @@ document.addEventListener('DOMContentLoaded', function() {
 
   // Initialize the new tooltip and interactions here
   setupDomainInteractions();
+  
+  // Add event listener for clear chat button
+  const clearChatBtn = document.getElementById('clear-chat-btn');
+  if (clearChatBtn) {
+      clearChatBtn.addEventListener('click', clearChatHistory);
+  }
+});
+
+// Function to handle clearing chat history
+async function clearChatHistory() {
+    try {
+        const response = await fetch('/clear_chat', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            }
+        });
+        
+        const data = await response.json();
+        if (data.success) {
+            const messagesContainer = document.querySelector('.messages');
+            
+            // Use welcome HTML from server if available
+            if (data.welcome_html) {
+                messagesContainer.innerHTML = data.welcome_html;
+            } else {
+                // Fallback welcome message
+                messagesContainer.innerHTML = `
+                    <div class="welcome-message">
+                        <h3>Welcome to the CDISC Standards Assistant</h3>
+                        <p>Chat history has been cleared. You can start a new conversation.</p>
+                        <div class="example-queries">
+                            <div class="example-query" id="ex-1">"Tell me about the DM domain structure and purpose"</div>
+                            <div class="example-query" id="ex-2">"Explain the key variables in the ADSL domain"</div>
+                            <div class="example-query" id="ex-3">"Generate code to map lab data to SDTM LB domain with explanation"</div>
+                        </div>
+                    </div>
+                `;
+            }
+            
+            // Re-bind example query click handlers
+            document.querySelectorAll('.example-query').forEach(example => {
+                example.addEventListener('click', function() {
+                    document.getElementById('message-input').value = this.textContent.replace(/^\"|\"$/g, '');
+                });
+            });
+            
+            // Clear the input field
+            document.getElementById('message-input').value = '';
+            
+            // Show success message
+            const banner = document.getElementById('upload-banner');
+            banner.textContent = 'Chat history cleared successfully';
+            banner.style.backgroundColor = '#4caf50';
+            banner.style.display = 'block';
+            setTimeout(() => {
+                banner.style.display = 'none';
+            }, 3000);
+        } else {
+            throw new Error(data.message || 'Failed to clear chat history');
+        }
+    } catch (error) {
+        console.error('Error clearing chat history:', error);
+        const banner = document.getElementById('upload-banner');
+        banner.textContent = 'Failed to clear chat history. Please try again.';
+        banner.style.backgroundColor = '#f44336';
+        banner.style.display = 'block';
+        setTimeout(() => {
+            banner.style.display = 'none';
+        }, 3000);
+    }
+}
+
+// Add this function to handle chat clearing
+async function clearChat() {
+    try {
+        const response = await fetch('/clear_chat', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            }
+        });
+        
+        const data = await response.json();
+        if (data.success) {
+            const messagesContainer = document.querySelector('.messages');
+            // Use welcome HTML from server if available
+            if (data.welcome_html) {
+                messagesContainer.innerHTML = data.welcome_html;
+            } else {
+                messagesContainer.innerHTML = `
+                    <div class="welcome-message">
+                        <h3>Welcome to the CDISC Standards Assistant</h3>
+                        <p>I can help you with:</p>
+                        <ul>
+                            <li>Converting source data into SDTM/ADaM standards</li>
+                            <li>Creating dbt models and SQL transformations for clinical data</li>
+                            <li>Implementing RECIST criteria and oncology-specific analyses</li>
+                            <li>Designing ADaM datasets for efficacy and safety analysis</li>
+                        </ul>
+                        <div class="example-queries">
+                            <div class="example-query">"Tell me about the DM domain structure and purpose"</div>
+                            <div class="example-query">"Explain the key variables in the ADSL domain"</div>
+                            <div class="example-query">"Generate code to map lab data to SDTM LB domain with explanation"</div>
+                        </div>
+                        <p class="prompt-tip">For best results, ask for explanations about domains before requesting code.</p>
+                    </div>
+                `;
+            }
+            
+            // Re-bind example query click handlers
+            bindExampleQueryHandlers();
+            
+            // Clear the input field
+            document.getElementById('message-input').value = '';
+            
+        } else {
+            console.error('Failed to clear chat history:', data.message);
+        }
+    } catch (error) {
+        console.error('Error clearing chat history:', error);
+    }
+}
+
+// Helper function to bind example query handlers
+function bindExampleQueryHandlers() {
+    document.querySelectorAll('.example-query').forEach(example => {
+        example.addEventListener('click', function() {
+            document.getElementById('message-input').value = this.textContent.replace(/^\"|\"$/g, '');
+        });
+    });
+}
+
+// Add this event listener when the document loads
+document.addEventListener('DOMContentLoaded', function() {
+    // ...existing code...
+    
+    // Set up clear chat button handler
+    const clearChatBtn = document.getElementById('clear-chat-btn');
+    if (clearChatBtn) {
+        clearChatBtn.addEventListener('click', clearChat);
+    }
+    
+    // Initial binding of example query handlers
+    bindExampleQueryHandlers();
 });

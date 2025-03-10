@@ -192,7 +192,7 @@ target_response AS (
             WHEN ROUND(100 * (SUM(CAST(tu.TUSTRESC AS FLOAT64)) - bs.BASELSUM) / bs.BASELSUM, 1) >= 20 THEN 'PD'
             ELSE 'SD'
         END AS TRSP
-    FROM source_tu tu
+    FROM source_tu
     LEFT JOIN baseline_sod bs ON tu.USUBJID = bs.USUBJID
     WHERE tu.TUTESTCD = 'DIAMETER'
     GROUP BY tu.USUBJID, tu.VISIT, tu.VISITNUM, tu.TUDTC, bs.BASELSUM
@@ -359,10 +359,10 @@ try:
     model = genai.GenerativeModel(
         'gemini-2.0-flash',  # Try more reliable model
         generation_config={
-            "temperature": 1.0,
+            "temperature": 0.7,
             "top_p": 0.8,
-            "top_k": 30,
-            "max_output_tokens": 2048,  # Shorter responses for faster generation
+            "top_k": 25,
+            "max_output_tokens": 3068,  # Shorter responses for faster generation
         },
         system_instruction=system_instruction
     )
@@ -516,7 +516,7 @@ def process_markdown_to_html(markdown_text):
         line = lines[i]
         
         # Code blocks
-        if line.startswith('```'):
+        if (line.startswith('```')):
             language = line[3:].strip() or "plaintext"
             code_lines = []
             i += 1  # Skip the opening ```
@@ -1241,36 +1241,39 @@ def clear_chat():
         except Exception as model_error:
             print(f"ERROR: Failed to create new Gemini chat session: {model_error}")
             traceback.print_exc()
-            # Even if Gemini fails, continue clearing other state
         
-        # Clear all conversation state for this session
+        # Clear conversation state for this session
         chat_histories[session_id] = []
         
-        # Reset next_message and next_image (global)
-        global next_message, next_image
-        next_message = ""
-        next_image = ""
+        # Keep uploaded_files metadata but clear session-specific data
+        if session_id in uploaded_files:
+            files_backup = uploaded_files[session_id]
+        else:
+            files_backup = []
         
-        # Keep files but clear chat history
-        
-        # Delete session files
+        # Delete all session files
         try:
-            history_file = os.path.join(SESSION_DATA_DIR, f"{session_id}_history.pkl")
-            if os.path.exists(history_file):
-                os.remove(history_file)
-                print(f"INFO: Removed session history file for {session_id}")
+            session_pattern = os.path.join(SESSION_DATA_DIR, f"{session_id}_*")
+            for session_file in glob.glob(session_pattern):
+                try:
+                    os.remove(session_file)
+                    print(f"INFO: Removed session file: {session_file}")
+                except Exception as remove_error:
+                    print(f"WARNING: Failed to remove session file {session_file}: {remove_error}")
         except Exception as file_error:
-            print(f"ERROR: Failed to remove session file: {file_error}")
+            print(f"ERROR: Failed to clean session files: {file_error}")
         
-        # Load welcome template - check if file exists first
+        # Restore uploaded files metadata
+        uploaded_files[session_id] = files_backup
+        
+        # Load welcome template
         try:
-            welcome_template_path = 'templates/welcome_template.html'
+            welcome_template_path = os.path.join('templates', 'welcome_template.html')
             if os.path.exists(welcome_template_path):
                 with open(welcome_template_path, 'r') as f:
                     welcome_html = f.read()
                     print("INFO: Successfully loaded welcome template")
             else:
-                # Use the welcome message HTML directly from index.html if template doesn't exist
                 welcome_html = """
                 <div class="welcome-message">
                   <h3>Welcome to the CDISC Standards Assistant</h3>
@@ -1287,7 +1290,6 @@ def clear_chat():
                     <div class="example-query" id="ex-2">"Explain the key variables in the ADSL domain"</div>
                     <div class="example-query" id="ex-3">"Generate code to map lab data to SDTM LB domain with explanation"</div>
                   </div>
-                  
                   <p class="prompt-tip">For best results, ask for explanations about domains before requesting code.</p>
                 </div>
                 """
@@ -1296,7 +1298,10 @@ def clear_chat():
             print(f"ERROR: Failed to load welcome template: {template_error}")
             welcome_html = "<div class='welcome-message'><h3>Chat history cleared</h3><p>You can start a new conversation.</p></div>"
         
-        # Log success
+        # Save the clean session state
+        save_session_data(session_id)
+        
+        # Log success and return
         print(f"INFO: Successfully cleared chat history for session {session_id}")
         return jsonify(success=True, message="Chat history cleared", welcome_html=welcome_html)
     except Exception as e:
@@ -1327,26 +1332,39 @@ def index():
     chat_history = get_chat_history(session_id)
     
     # Convert our chat history format to the one expected by the template
-    template_history = []
-    for msg in chat_history:
+    messages = []
+    for idx, msg in enumerate(chat_history):
         if 'user' in msg:
-            template_history.append({
+            messages.append({
                 'role': 'user',
-                'content': msg['user']
+                'content': msg['user'],
+                'id': idx + 1
             })
         if 'bot' in msg and msg['bot']:
-            template_history.append({
+            messages.append({
                 'role': 'assistant',
-                'content': msg['bot']
+                'content': msg['bot'],
+                'id': idx + 1
             })
     
     # Get files for this session
     session_files = uploaded_files.get(session_id, [])
     
+    # Use welcome_template.html content if it exists
+    welcome_html = None
+    try:
+        welcome_template_path = 'templates/welcome_template.html'
+        if os.path.exists(welcome_template_path):
+            with open(welcome_template_path, 'r') as f:
+                welcome_html = f.read()
+    except Exception as e:
+        print(f"Error loading welcome template: {e}")
+    
     return render_template(
         "index.html", 
-        chat_history=template_history,
-        files=session_files
+        messages=messages,
+        files=session_files,
+        welcome_html=welcome_html
     )
 
 @app.route("/chat", methods=["POST"])
@@ -1520,14 +1538,9 @@ ORDER BY
                     # Fast string joining
                     relevant_vars_str = ", ".join(var_strings)
                     if len(relevant_vars) > 10:
-                        relevant_vars_str += f" and {len(relevant_vars) - 10} more variables"
-                    
-                    # Create prompt with fast string formatting
-                    enhanced_prompt = code_prompt_template.format(
-                        query=message,
                         relevant_view=relevant_view,
                         relevant_vars=relevant_vars_str
-                    )
+                    
                     print(f"INFO: Enhanced code prompt with view context: {relevant_view}")
                 except Exception as prompt_error:
                     print(f"ERROR building enhanced code prompt: {prompt_error}")
@@ -1665,7 +1678,7 @@ def stream():
             # Check for code blocks
             has_code = "```" in response_text
             
-            if has_code:
+            if (has_code):
                 print(f"DEBUG: Response contains code blocks")
                 print(f"FULL RESPONSE WITH CODE:\n{response_text}")
                 simplified_response = "Your code example is ready. Code has been logged to the server console."
@@ -1764,6 +1777,14 @@ def test_chat():
             "response": "This endpoint expects a JSON request with a 'message' field",
             "received_data": request.get_data(as_text=True)
         })
+
+@app.after_request
+def add_header(response):
+    """Add headers to prevent browser caching"""
+    response.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate, max-age=0'
+    response.headers['Pragma'] = 'no-cache'
+    response.headers['Expires'] = '-1'
+    return response
 
 if __name__ == "__main__":
     app.run(debug=True, host="0.0.0.0", port=8080)
