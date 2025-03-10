@@ -157,4 +157,32 @@ document.addEventListener("DOMContentLoaded", function() {
             }, 4000);
         });
     });
+
+    // Set up tab switching
+    document.querySelectorAll('.tab-btn').forEach(button => {
+        button.addEventListener('click', function() {
+            // Remove active class from all buttons and lists
+            document.querySelectorAll('.tab-btn').forEach(btn => btn.classList.remove('active'));
+            document.querySelectorAll('.domain-list').forEach(list => {
+                list.classList.remove('active');
+                list.style.display = 'none';
+            });
+            
+            // Add active class to clicked button and corresponding list
+            this.classList.add('active');
+            const targetList = document.getElementById(this.getAttribute('data-tab') + '-domains');
+            targetList.classList.add('active');
+            targetList.style.display = 'flex';
+        });
+    });
+
+    // Set initial state - SDTM tab active
+    const sdtmTab = document.querySelector('.tab-btn[data-tab="sdtm"]');
+    if (sdtmTab) {
+        sdtmTab.classList.add('active');
+        const sdtmDomains = document.getElementById('sdtm-domains');
+        const adamDomains = document.getElementById('adam-domains');
+        if (sdtmDomains) sdtmDomains.style.display = 'flex';
+        if (adamDomains) adamDomains.style.display = 'none';
+    }
 });

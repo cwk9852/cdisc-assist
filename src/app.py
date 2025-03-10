@@ -1156,16 +1156,16 @@ else:
 @app.route("/upload", methods=["POST"])
 def upload_file():
     """Takes in a file, checks if it is valid, and saves it"""
-    global next_image
     global edc_metadata
     global uploaded_files
     global sdtm_metadata
+
+    session_id = get_or_create_session_id()
 
     if "file" not in request.files:
         return jsonify(success=False, message="No file part")
 
     file = request.files["file"]
-
     if file.filename == "":
         return jsonify(success=False, message="No selected file")
     
@@ -1178,42 +1178,37 @@ def upload_file():
         file_ext = os.path.splitext(filename)[1].lower()
         
         if file_ext in ['.jpg', '.jpeg', '.png']:
-            # Image handling for multimodal input
-            file_stream = io.BytesIO(open(file_path, 'rb').read())
-            file_stream.seek(0)
-            next_image = Image.open(file_stream)
             file_type = "Image"
         elif file_ext == '.csv':
-            # Load CSV as EDC metadata
             try:
                 edc_metadata = pd.read_csv(file_path)
-                file_obj = upload_and_index_file(file_path, mime_type="text/csv")
                 file_type = "EDC Metadata"
             except Exception as e:
                 return jsonify(success=False, message=f"Error loading CSV file: {str(e)}")
         elif file_ext == '.xml':
-            # Handle XML files - parse if it's SDTM metadata
             try:
                 if "sdtm" in filename.lower():
                     sdtm_metadata = parse_sdtm_xml(file_path)
-                file_obj = upload_and_index_file(file_path, mime_type="text/xml")
                 file_type = "SDTM Metadata" if "sdtm" in filename.lower() else "XML Document"
             except Exception as e:
                 return jsonify(success=False, message=f"Error processing XML file: {str(e)}")
         elif file_ext in ['.xpt', '.sas7bdat']:
-            # Handle other clinical data files
-            file_obj = upload_and_index_file(file_path)
             file_type = "Clinical Data"
         else:
-            file_obj = upload_and_index_file(file_path)
             file_type = "Document"
             
-        uploaded_files.append({"name": filename, "type": file_type})
+        # Initialize the session's uploaded files list if it doesn't exist
+        if session_id not in uploaded_files:
+            uploaded_files[session_id] = []
+            
+        file_info = {"name": filename, "type": file_type}
+        uploaded_files[session_id].append(file_info)
         
         return jsonify(
             success=True,
             message=f"{file_type} uploaded successfully and added to the conversation",
             filename=filename,
+            fileInfo=file_info
         )
     return jsonify(success=False, message="File type not allowed")
 
@@ -1525,6 +1520,7 @@ ORDER BY
             print(f"INFO: Query type detected as: {query_type}")
             
             # Enhanced user prompt with context - more efficient implementation
+            enhanced_prompt = message  # Initialize here
             if query_type == 'code' and relevant_view and relevant_vars:
                 try:
                     # Fast implementation for variable string building - limit to 10 vars

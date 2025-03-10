@@ -1132,6 +1132,79 @@ document.addEventListener('DOMContentLoaded', function() {
   if (clearChatBtn) {
       clearChatBtn.addEventListener('click', clearChatHistory);
   }
+
+  // File upload handling
+  document.getElementById('file-upload').addEventListener('change', function(e) {
+    const file = e.target.files[0];
+    if (!file) return;
+
+    const formData = new FormData();
+    formData.append('file', file);
+
+    // Show upload progress
+    const uploadBanner = document.getElementById('upload-banner');
+    uploadBanner.style.display = 'block';
+    uploadBanner.style.backgroundColor = '#1a73e8';
+    uploadBanner.textContent = 'Uploading file...';
+
+    fetch('/upload', {
+        method: 'POST',
+        body: formData
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            // Show success message
+            uploadBanner.style.backgroundColor = '#4caf50';
+            uploadBanner.textContent = data.message;
+
+            // Add the new file to the list
+            const filesList = document.getElementById('filesList');
+            const filesPlaceholder = document.getElementById('filesPlaceholder');
+            
+            if (filesPlaceholder) {
+                filesPlaceholder.remove();
+            }
+
+            const fileEntry = document.createElement('div');
+            fileEntry.className = 'file-entry';
+            fileEntry.innerHTML = `
+                <div class="file-info">
+                    <span class="file-name">${data.fileInfo.name}</span>
+                    <span class="file-type">${data.fileInfo.type}</span>
+                </div>
+            `;
+            filesList.appendChild(fileEntry);
+
+            // Clear the file input
+            e.target.value = '';
+
+            // Hide the banner after 3 seconds
+            setTimeout(() => {
+                uploadBanner.style.display = 'none';
+            }, 3000);
+        } else {
+            // Show error message
+            uploadBanner.style.backgroundColor = '#e53935';
+            uploadBanner.textContent = data.message;
+
+            // Hide the banner after 5 seconds
+            setTimeout(() => {
+                uploadBanner.style.display = 'none';
+            }, 5000);
+        }
+    })
+    .catch(error => {
+        console.error('Error:', error);
+        uploadBanner.style.backgroundColor = '#e53935';
+        uploadBanner.textContent = 'Error uploading file. Please try again.';
+
+        // Hide the banner after 5 seconds
+        setTimeout(() => {
+            uploadBanner.style.display = 'none';
+        }, 5000);
+    });
+  });
 });
 
 // Function to handle clearing chat history

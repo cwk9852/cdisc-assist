@@ -28,6 +28,31 @@
         <div class="app-title">CDISC Standards Assistant</div>
       </div>
       
+      <!-- Files section -->
+      <div class="files-section">
+        <h3>Files & Metadata</h3>
+        <div id="filesList" class="files-list">
+          {% if files %}
+            {% for file in files %}
+            <div class="file-entry">
+              <div class="file-info">
+                <span class="file-name">{{ file.name }}</span>
+                <span class="file-type">{{ file.type }}</span>
+              </div>
+            </div>
+            {% endfor %}
+          {% else %}
+            <p id="filesPlaceholder" class="files-placeholder">No files loaded</p>
+          {% endif %}
+        </div>
+        
+        <!-- File upload section -->
+        <div class="upload-section">
+          <input type="file" id="file-upload" name="file" class="file-upload-input" accept=".csv,.xml,.xpt,.sas7bdat">
+          <label for="file-upload" class="file-upload-btn">Upload Data File</label>
+        </div>
+      </div>
+
       <!-- Domain Guide moved to top -->
       <div class="domain-guide">
         <h3>Domain Quick Reference</h3>
