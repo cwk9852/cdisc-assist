@@ -5,6 +5,7 @@ from flask import (
     Response,
     stream_with_context,
     jsonify,
+    session
 )
 from werkzeug.utils import secure_filename
 from PIL import Image
@@ -21,6 +22,9 @@ import re
 # Removed heavy NLP dependencies for better performance
 from xml.etree import ElementTree
 import utils
+from sanitize import sanitize_text
+import uuid
+import pickle
 
 # Load environment variables from .env file
 load_dotenv()
@@ -355,7 +359,7 @@ try:
     model = genai.GenerativeModel(
         'gemini-2.0-flash',  # Try more reliable model
         generation_config={
-            "temperature": 0.9,
+            "temperature": 1.0,
             "top_p": 0.8,
             "top_k": 30,
             "max_output_tokens": 2048,  # Shorter responses for faster generation
@@ -369,7 +373,7 @@ except Exception as e:
     # Fallback to a different model if the specified one isn't available
     try:
         model = genai.GenerativeModel(
-            'gemini-2.0-pro-exp-02-05',  # Fallback model
+            'gemini-2.0-flash-lite',  # Fallback model
             generation_config={
                 "temperature": 0.7,
                 "top_p": 0.8,
@@ -386,18 +390,213 @@ except Exception as e:
 app = Flask(__name__, static_folder='static', template_folder='templates')
 app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
 app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16MB max upload
+app.config['SECRET_KEY'] = os.getenv('SECRET_KEY', 'cdisc-standards-assistant-key')
 
-chat_session = model.start_chat(history=[])
+# Session data storage
+SESSION_DATA_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'session_data')
+os.makedirs(SESSION_DATA_DIR, exist_ok=True)
+
+# These will be specific to each session
+chat_sessions = {}  # Maps session_id to chat_session object
 next_message = ""
 next_image = ""
-uploaded_files = []
-edc_metadata = None
-sdtm_metadata = {}
-chat_history = []
+uploaded_files = {}  # Maps session_id to uploaded_files list
+edc_metadata = None  # Global metadata shared across sessions
+sdtm_metadata = {}   # Global metadata shared across sessions
+chat_histories = {}  # Maps session_id to chat_history list
 
 # Don't load heavy NLP models for better performance
 nlp_models_loaded = False
 print("Using lightweight keyword matching for better performance")
+
+def get_or_create_session_id():
+    """Get or create a unique session ID for the current user"""
+    if 'session_id' not in session:
+        session['session_id'] = str(uuid.uuid4())
+        print(f"Created new session: {session['session_id']}")
+    return session['session_id']
+
+def get_chat_session(session_id):
+    """Get or create a chat session for the given session ID"""
+    if session_id not in chat_sessions:
+        # Create a new session
+        chat_sessions[session_id] = model.start_chat(history=[])
+        chat_histories[session_id] = []
+        uploaded_files[session_id] = []
+        print(f"Created new chat session for {session_id}")
+    return chat_sessions[session_id]
+
+def get_chat_history(session_id):
+    """Get the chat history for the given session ID"""
+    if session_id not in chat_histories:
+        chat_histories[session_id] = []
+    return chat_histories[session_id]
+
+def save_session_data(session_id):
+    """Save session data to a file"""
+    try:
+        if session_id in chat_histories:
+            # Save chat history
+            session_file = os.path.join(SESSION_DATA_DIR, f"{session_id}_history.pkl")
+            with open(session_file, 'wb') as f:
+                pickle.dump(chat_histories[session_id], f)
+            
+            # Save uploaded files (just their metadata, not the actual files)
+            if session_id in uploaded_files:
+                files_file = os.path.join(SESSION_DATA_DIR, f"{session_id}_files.pkl")
+                with open(files_file, 'wb') as f:
+                    pickle.dump(uploaded_files[session_id], f)
+            
+            print(f"Session data saved for {session_id}")
+            return True
+    except Exception as e:
+        print(f"Error saving session data: {e}")
+        traceback.print_exc()
+    return False
+
+def load_session_data(session_id):
+    """Load session data from a file"""
+    try:
+        # Load chat history
+        history_file = os.path.join(SESSION_DATA_DIR, f"{session_id}_history.pkl")
+        if os.path.exists(history_file):
+            with open(history_file, 'rb') as f:
+                chat_histories[session_id] = pickle.load(f)
+            
+            # Recreate session with loaded history for the LLM
+            history_for_llm = []
+            for msg in chat_histories[session_id]:
+                if 'user' in msg and 'bot' in msg:
+                    history_for_llm.append({
+                        'role': 'user',
+                        'parts': [msg['user']]
+                    })
+                    if msg['bot']:  # Only add bot messages if they're not empty
+                        history_for_llm.append({
+                            'role': 'model',
+                            'parts': [msg['bot']]
+                        })
+            
+            # Create a new chat session with the loaded history
+            chat_sessions[session_id] = model.start_chat(history=history_for_llm)
+            
+            # Load uploaded files
+            files_file = os.path.join(SESSION_DATA_DIR, f"{session_id}_files.pkl")
+            if os.path.exists(files_file):
+                with open(files_file, 'rb') as f:
+                    uploaded_files[session_id] = pickle.load(f)
+            
+            print(f"Session data loaded for {session_id}")
+            return True
+    except Exception as e:
+        print(f"Error loading session data: {e}")
+        traceback.print_exc()
+        # Start with a fresh session if loading fails
+        chat_histories[session_id] = []
+        chat_sessions[session_id] = model.start_chat(history=[])
+        uploaded_files[session_id] = []
+    return False
+
+def process_markdown_to_html(markdown_text):
+    """
+    Simple markdown to HTML converter
+    """
+    if not markdown_text:
+        return ""
+    
+    # Function to escape HTML
+    def escape_html(text):
+        return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+    
+    html = []
+    lines = markdown_text.split('\n')
+    i = 0
+    
+    while i < len(lines):
+        line = lines[i]
+        
+        # Code blocks
+        if line.startswith('```'):
+            language = line[3:].strip() or "plaintext"
+            code_lines = []
+            i += 1  # Skip the opening ```
+            
+            # Collect all lines until closing ```
+            while i < len(lines) and not lines[i].startswith('```'):
+                code_lines.append(lines[i])
+                i += 1
+                
+            # Skip the closing ```
+            if i < len(lines):
+                i += 1
+                
+            # Generate code block HTML
+            code = escape_html('\n'.join(code_lines))
+            html.append(f'''
+            <div style="margin:10px 0; border:1px solid #ddd; border-radius:4px; overflow:hidden;">
+                <div style="background:#f5f5f5; padding:5px 10px; display:flex; justify-content:space-between; border-bottom:1px solid #ddd;">
+                    <span style="font-weight:bold">{language.upper()}</span>
+                    <button class="copy-btn" style="border:none; background:none; cursor:pointer; color:blue;">Copy</button>
+                </div>
+                <pre style="margin:0; padding:10px; overflow:auto;"><code class="{language}">{code}</code></pre>
+            </div>
+            ''')
+            continue
+        
+        # Headers
+        header_match = re.match(r'^(#{1,6})\s+(.+)$', line)
+        if header_match:
+            level = len(header_match.group(1))
+            text = header_match.group(2)
+            html.append(f'<h{level} style="margin:0.4em 0">{text}</h{level}>')
+            i += 1
+            continue
+        
+        # Lists
+        list_match = re.match(r'^[-*+]\s+(.+)$', line)
+        if list_match:
+            text = list_match.group(1)
+            html.append(f'<ul style="margin:0.2em 0; padding-left:1.5em"><li>{text}</li></ul>')
+            i += 1
+            continue
+        
+        # Paragraphs
+        if line.strip():
+            html.append(f'<p style="margin:0.3em 0">{line}</p>')
+        else:
+            html.append('<br>')
+        
+        i += 1
+    
+    return '\n'.join(html)
+
+def sanitize_markdown(text):
+    """Basic function to sanitize problematic markdown content"""
+    if not text:
+        return ""
+    
+    # Replace [object Object] with empty string
+    text = text.replace("[object Object]", "")
+    
+    # If we end up with empty headers like "# ", fix them
+    text = re.sub(r'^(#{1,6})\s*$', r'\1 Section', text, flags=re.MULTILINE)
+    
+    # Use html module's escape function to handle HTML entities
+    text = html.escape(text)
+    
+    # Unescape code blocks and reformat them 
+    # This is a simple approach that works in many cases but isn't perfect
+    code_block_pattern = r'```(.*?)\n(.*?)```'
+    
+    def format_code_block(match):
+        language = match.group(1).strip() or "plaintext"
+        code = match.group(2)
+        return f'''```{language}
+{code}```'''
+    
+    text = re.sub(code_block_pattern, format_code_block, text, flags=re.DOTALL)
+    
+    return text
 
 def allowed_file(filename):
     """Returns if a filename is supported via its extension"""
@@ -1029,35 +1228,76 @@ def clear_chat():
     Clears the chat history and starts a new session with the LLM.
     Properly resets all conversation state for a fresh start.
     """
-    global chat_session, chat_history, next_message, next_image
     try:
-        print("INFO: Clearing chat history and starting new session")
+        # Get the session ID
+        session_id = get_or_create_session_id()
+        
+        print(f"INFO: Clearing chat history for session {session_id}")
         
         # Reset the Gemini chat session
         try:
-            chat_session = model.start_chat(history=[])
-            print("INFO: Successfully created new Gemini chat session")
+            chat_sessions[session_id] = model.start_chat(history=[])
+            print(f"INFO: Successfully created new Gemini chat session for {session_id}")
         except Exception as model_error:
             print(f"ERROR: Failed to create new Gemini chat session: {model_error}")
             traceback.print_exc()
             # Even if Gemini fails, continue clearing other state
         
-        # Clear all conversation state
-        chat_history = []
+        # Clear all conversation state for this session
+        chat_histories[session_id] = []
+        
+        # Reset next_message and next_image (global)
+        global next_message, next_image
         next_message = ""
         next_image = ""
         
-        # Load welcome template
+        # Keep files but clear chat history
+        
+        # Delete session files
         try:
-            with open('templates/welcome_template.html', 'r') as f:
-                welcome_html = f.read()
-                print("INFO: Successfully loaded welcome template")
+            history_file = os.path.join(SESSION_DATA_DIR, f"{session_id}_history.pkl")
+            if os.path.exists(history_file):
+                os.remove(history_file)
+                print(f"INFO: Removed session history file for {session_id}")
+        except Exception as file_error:
+            print(f"ERROR: Failed to remove session file: {file_error}")
+        
+        # Load welcome template - check if file exists first
+        try:
+            welcome_template_path = 'templates/welcome_template.html'
+            if os.path.exists(welcome_template_path):
+                with open(welcome_template_path, 'r') as f:
+                    welcome_html = f.read()
+                    print("INFO: Successfully loaded welcome template")
+            else:
+                # Use the welcome message HTML directly from index.html if template doesn't exist
+                welcome_html = """
+                <div class="welcome-message">
+                  <h3>Welcome to the CDISC Standards Assistant</h3>
+                  <p>I can help you with:</p>
+                  <ul>
+                    <li>Converting source data into SDTM/ADaM standards</li>
+                    <li>Creating dbt models and SQL transformations for clinical data</li>
+                    <li>Implementing RECIST criteria and oncology-specific analyses</li>
+                    <li>Designing ADaM datasets for efficacy and safety analysis</li>
+                  </ul>
+                  <p>Try asking:</p>
+                  <div class="example-queries">
+                    <div class="example-query" id="ex-1">"Tell me about the DM domain structure and purpose"</div>
+                    <div class="example-query" id="ex-2">"Explain the key variables in the ADSL domain"</div>
+                    <div class="example-query" id="ex-3">"Generate code to map lab data to SDTM LB domain with explanation"</div>
+                  </div>
+                  
+                  <p class="prompt-tip">For best results, ask for explanations about domains before requesting code.</p>
+                </div>
+                """
+                print("INFO: Using inline welcome message (template not found)")
         except Exception as template_error:
             print(f"ERROR: Failed to load welcome template: {template_error}")
-            welcome_html = "<div class='welcome-message'><h3>Chat history cleared</h3></div>"
+            welcome_html = "<div class='welcome-message'><h3>Chat history cleared</h3><p>You can start a new conversation.</p></div>"
         
         # Log success
-        print("INFO: Successfully cleared chat history and reset state")
+        print(f"INFO: Successfully cleared chat history for session {session_id}")
         return jsonify(success=True, message="Chat history cleared", welcome_html=welcome_html)
     except Exception as e:
         error_message = f"Error clearing chat: {str(e)}"
@@ -1067,11 +1307,46 @@ def clear_chat():
 
 @app.route("/", methods=["GET"])
 def index():
-    """Renders the main homepage for the app"""
+    """Renders the main homepage for the app with persistent sessions"""
+    session_id = get_or_create_session_id()
+    
+    # Try to load existing session data
+    if session_id in chat_sessions:
+        # Session already initialized
+        print(f"Using existing session: {session_id}")
+    else:
+        # Try to load from disk
+        load_result = load_session_data(session_id)
+        if load_result:
+            print(f"Loaded session data from disk for {session_id}")
+        else:
+            print(f"No saved data found for {session_id}")
+    
+    # Ensure we have a chat session
+    chat_session = get_chat_session(session_id)
+    chat_history = get_chat_history(session_id)
+    
+    # Convert our chat history format to the one expected by the template
+    template_history = []
+    for msg in chat_history:
+        if 'user' in msg:
+            template_history.append({
+                'role': 'user',
+                'content': msg['user']
+            })
+        if 'bot' in msg and msg['bot']:
+            template_history.append({
+                'role': 'assistant',
+                'content': msg['bot']
+            })
+    
+    # Get files for this session
+    session_files = uploaded_files.get(session_id, [])
+    
     return render_template(
         "index.html", 
-        chat_history=chat_session.history,
-        files=uploaded_files
+        chat_history=template_history,
+        files=session_files
     )
 
 @app.route("/chat", methods=["POST"])
@@ -1115,6 +1390,11 @@ def chat():
             print(f"ERROR: Message too long ({len(message)} chars)")
             return jsonify(success=False, response="Your message is too long. Please limit your query to 2000 characters.")
             
+        # Get the session ID
+        session_id = get_or_create_session_id()
+        chat_session = get_chat_session(session_id)
+        chat_history = get_chat_history(session_id)
+        
         # Add to chat history for tracking (use neutral keys that work with or without Gemini)
         chat_history.append({"user": message, "bot": ""})
         
@@ -1294,25 +1574,32 @@ ORDER BY
                 chat_history[-1]["bot"] = error_msg
                 return jsonify(success=False, response=error_msg)
             
-            # Store the response in history
-            chat_history[-1]["bot"] = response_text
+            # Store the response directly but clean out any object references
+            chat_history[-1]["bot"] = sanitize_text(response_text)
+            
+            # Save the updated session data
+            save_session_data(session_id)
             
             # Log information about the response
             response_preview = response_text[:100] + "..." if len(response_text) > 100 else response_text
             print(f"INFO: Generated response: '{response_preview}'")
             print(f"INFO: Response length: {len(response_text)} characters")
             print(f"INFO: Contains code blocks: {'```' in response_text}")
+            print(f"INFO: Session {session_id} updated and saved")
             
             # Return the full text response with debug info
             print("INFO: Returning successful response")
+            # Return sanitized response
+            sanitized_response = sanitize_text(response_text)
             return jsonify(
                 success=True, 
-                response=response_text,
+                response=sanitized_response,
                 metadata={
                     "query_type": query_type,
-                    "response_length": len(response_text),
-                    "has_code_blocks": "```" in response_text,
-                    "relevant_view": relevant_view if relevant_view else None
+                    "response_length": len(sanitized_response),
+                    "has_code_blocks": "```" in sanitized_response,
+                    "relevant_view": relevant_view if relevant_view else None,
+                    "session_id": session_id
                 }
             )
                 
@@ -1322,13 +1609,16 @@ ORDER BY
             traceback.print_exc()
             chat_history[-1]["bot"] = error_msg
             
+            # Still save the error in history
+            save_session_data(session_id)
+            
             # Try to provide a more helpful error message
             if "quota" in str(model_error).lower() or "rate" in str(model_error).lower():
                 error_msg = "API quota exceeded. Please try again in a moment."
             elif "internal" in str(model_error).lower():
                 error_msg = "The service is experiencing technical difficulties. Please try again later."
             
-            return jsonify(success=False, response=error_msg)
+            return jsonify(success=False, response=error_msg, session_id=session_id)
             
     except Exception as server_error:
         error_message = f"Server error occurred. Please try again later."
