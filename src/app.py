@@ -953,12 +953,15 @@ def test_edc_view_selection():
             
     print("\n===== END OF EDC VIEW SELECTION TESTS =====\n")
 
-# Initialize data files on startup and run tests
-initialize_data_files()
-
-# Only run tests in debug mode to avoid slowing down production
+# Initialize data files ONLY at startup (will be performed once)
+# Tests only run in development mode
 if os.getenv('FLASK_ENV') == 'development' or os.getenv('FLASK_DEBUG') == '1':
+    # Initialize files and then run tests in debug mode
+    initialize_data_files()
     test_edc_view_selection()
+else:
+    # Just initialize files in production mode, no tests
+    initialize_data_files()
 
 @app.route("/upload", methods=["POST"])
 def upload_file():
@@ -1078,16 +1081,29 @@ def chat():
     Contains robust error handling and logs detailed information for debugging.
     """
     try:
-        print("DEBUG: Chat endpoint called")
+        print("\n\n==== CHAT ENDPOINT CALLED ====")
+        print(f"TIME: {time.strftime('%Y-%m-%d %H:%M:%S')}")
+        print(f"METHOD: {request.method}")
+        print(f"ROUTE: {request.path}")
         
-        # Check for valid JSON
+        # Check for valid JSON and log the raw request data
+        print(f"DEBUG: Request headers: {dict(request.headers)}")
+        print(f"DEBUG: Request content type: {request.content_type}")
+        print(f"DEBUG: Raw request data: {request.data}")
+        
         if not request.is_json:
-            print("ERROR: Request is not JSON")
+            print(f"ERROR: Request is not JSON. Raw data: {request.data}")
             return jsonify(success=False, response="Invalid request format. Please send a JSON object with a 'message' field.")
         
-        # Extract message from request
-        message = request.json.get("message", "").strip()
-        print(f"INFO: Received message: '{message[:50]}...' ({len(message)} chars)")
+        try:
+            # Extract message from request
+            print(f"DEBUG: Request JSON: {request.json}")
+            message = request.json.get("message", "").strip()
+            print(f"INFO: Received message: '{message[:50]}...' ({len(message)} chars)")
+        except Exception as e:
+            print(f"ERROR parsing JSON: {e}")
+            print(f"Raw request data: {request.data}")
+            return jsonify(success=False, response="Error parsing request data. Please check your request format.")
         
         # Validate message content
         if not message:
@@ -1398,6 +1414,64 @@ def get_query_type():
     
     query_type = analyze_query_type(query)
     return jsonify(success=True, query_type=query_type)
+
+@app.route("/ping", methods=["GET", "POST"])
+def ping():
+    """Simple diagnostic endpoint to test connectivity"""
+    print(f"\n==== PING ENDPOINT CALLED ====")
+    print(f"TIME: {time.strftime('%Y-%m-%d %H:%M:%S')}")
+    print(f"METHOD: {request.method}")
+    
+    # Return request info for diagnostic purposes
+    response_data = {
+        "success": True,
+        "time": time.strftime('%Y-%m-%d %H:%M:%S'),
+        "method": request.method,
+        "headers": dict(request.headers),
+        "is_json": request.is_json,
+        "data": request.get_data(as_text=True) if request.data else None
+    }
+    
+    print("Ping responding with success")
+    return jsonify(response_data)
+
+@app.route("/test_chat", methods=["GET", "POST"])
+def test_chat():
+    """Special test endpoint that mimics the chat endpoint but without LLM processing"""
+    print(f"\n==== TEST CHAT ENDPOINT CALLED ====")
+    print(f"TIME: {time.strftime('%Y-%m-%d %H:%M:%S')}")
+    print(f"METHOD: {request.method}")
+    
+    # Log all request details
+    print(f"DEBUG: Request headers: {dict(request.headers)}")
+    print(f"DEBUG: Request content type: {request.content_type}")
+    print(f"DEBUG: Request data: {request.get_data(as_text=True)}")
+    
+    if request.is_json:
+        try:
+            message = request.json.get("message", "")
+            print(f"DEBUG: Received message: '{message}'")
+            
+            # Return immediate success with echo
+            return jsonify({
+                "success": True,
+                "response": f"Echo: {message}",
+                "metadata": {
+                    "time": time.strftime('%Y-%m-%d %H:%M:%S'),
+                    "is_test": True
+                }
+            })
+        except Exception as e:
+            print(f"ERROR parsing JSON: {e}")
+            return jsonify(success=False, response=f"Error parsing JSON: {str(e)}")
+    else:
+        # Handle non-JSON request
+        print("DEBUG: Received non-JSON request")
+        return jsonify({
+            "success": False,
+            "response": "This endpoint expects a JSON request with a 'message' field",
+            "received_data": request.get_data(as_text=True)
+        })
 
 if __name__ == "__main__":
     app.run(debug=True, host="0.0.0.0", port=8080)
