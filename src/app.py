@@ -346,12 +346,16 @@ if code_example:
     Please use that as a guide.
     """
 
+# Initialize cached domain lookups for performance
+domain_view_cache = {}
+domain_processed = set()
+
 # Create model with specific configuration for clinical data
 try:
     model = genai.GenerativeModel(
         'gemini-2.0-flash',  # Try more reliable model
         generation_config={
-            "temperature": 0.7,
+            "temperature": 0.9,
             "top_p": 0.8,
             "top_k": 30,
             "max_output_tokens": 2048,  # Shorter responses for faster generation
@@ -426,71 +430,153 @@ def wait_for_files_active(files):
 
 def analyze_query_type(query):
     """
-    Simplified query type analysis using keyword matching for better performance.
+    Optimized query type analysis using cached patterns for better performance.
     """
+    # Cache for common SQL patterns - avoids multiple string checks
+    SQL_PATTERNS = ['select', 'from', 'where', 'join', 'group by', 'order by', 'having', 'union']
+    CODE_PHRASES = ['create a', 'generate a', 'write a', 'build a', 'implement', 'code for']
+    EXPLANATION_PHRASES = ['what is', 'how does', 'explain', 'why is', 'tell me about', 'describe']
+    
     query = query.lower()
     
-    # SQL-specific patterns strongly suggest code
-    if any(term in query for term in ['select', 'from', 'where', 'join', 'group by']):
-        return 'code'
+    # Fast path for obvious SQL
+    for pattern in SQL_PATTERNS:
+        if pattern in query:
+            return 'code'
     
-    # Check for code indicators
+    # Check for specific code phrases (faster than iterating all indicators)
+    for phrase in CODE_PHRASES:
+        if phrase in query:
+            return 'code'
+            
+    # Check for specific explanation phrases
+    for phrase in EXPLANATION_PHRASES:
+        if phrase in query:
+            return 'explanation'
+    
+    # Only do the more expensive analysis if we haven't determined yet
     code_score = sum(1 for word in code_indicators if word in query.split())
     explanation_score = sum(1 for word in explanation_indicators if word in query.split())
-    
-    # Some extra heuristics for better accuracy
-    if any(phrase in query for phrase in ['create a', 'generate a', 'write a', 'build a']):
-        code_score += 2
-    
-    if any(phrase in query for phrase in ['what is', 'how does', 'explain', 'why is']):
-        explanation_score += 2
     
     return 'code' if code_score >= explanation_score else 'explanation'
 
 def find_relevant_edc_view(query, edc_metadata):
     """
-    Enhanced function to find the most relevant EDC view based on keyword matching.
-    Supports both SDTM and ADaM domains with improved pattern matching.
-    Fixed to properly match domain-specific views rather than defaulting to ADDCYCLE.
+    Performance-optimized function to find the most relevant EDC view based on keyword matching.
+    Uses a cache to avoid repeated expensive matching operations.
     """
+    global domain_view_cache, domain_processed
+    
     if not isinstance(edc_metadata, pd.DataFrame) or edc_metadata is None:
         print("WARNING: edc_metadata not available")
         return None
-        
+    
+    # Start timing the function
+    start_time = time.time()
+    
+    # Check if we have processed views before
+    if not domain_processed:
+        # Cache setup - only done once per server session
+        try:
+            # Extract unique viewnames just once
+            viewnames = edc_metadata['viewname'].unique()
+            string_views = [v for v in viewnames if isinstance(v, str)]
+            
+            # Pre-populate the cache with common domains
+            common_domains = ['DM', 'AE', 'LB', 'VS', 'CM', 'EX', 'TU', 'RS', 'ADSL', 'ADAE', 'ADLB']
+            
+            # Direct mappings from CDISC domains to EDC view name patterns
+            domain_to_view_patterns = {
+                # Core SDTM domains with explicit mapping to view patterns
+                'DM': ['DM', 'DEMO', 'SUBJECT'],
+                'AE': ['AE', 'ADVERSE'],
+                'LB': ['LAB', 'BLOOD', 'SPECIMEN', 'URINE'],
+                'EX': ['EX', 'EXPOSURE', 'DRUG', 'MEDICATION', 'TREATMENT'],
+                'CM': ['CM', 'CONMED', 'MEDICATION'],
+                'MH': ['MH', 'HISTORY', 'MEDICAL'],
+                'VS': ['VS', 'VITAL', 'BP'],
+                'TU': ['TU', 'TUMOR', 'LESION'],
+                'RS': ['RS', 'RESPONSE', 'RECIST', 'EFFICACY'],
+                'EG': ['EG', 'ECG', 'ELECTRO'],
+                
+                # ADaM domains
+                'ADSL': ['ADSL', 'SUBJECT', 'DEMO'],
+                'ADAE': ['ADAE', 'AE'],
+                'ADLB': ['ADLB', 'LAB'],
+                'ADEX': ['ADEX', 'EX', 'EXPOSURE'],
+                'ADCM': ['ADCM', 'CM', 'MEDICATION'],
+                'ADRS': ['ADRS', 'RESPONSE'],
+                'ADTU': ['ADTU', 'TUMOR'],
+                'ADVS': ['ADVS', 'VS', 'VITAL'],
+            }
+            
+            # Pre-populate cache with direct domain matches (most common case)
+            for domain, patterns in domain_to_view_patterns.items():
+                for pattern in patterns:
+                    pattern_views = [v for v in string_views if pattern.lower() in v.lower()]
+                    if pattern_views:
+                        # Sort by length for more specific matches
+                        pattern_views.sort(key=len)
+                        domain_view_cache[domain.lower()] = pattern_views[0]
+                        print(f"CACHE: Pre-populated domain {domain} with view {pattern_views[0]}")
+                        break
+            
+            # Also add explicit mappings for common views
+            domain_view_priority = {
+                'DM': 'V_MEDIFLEX_DM',
+                'AE': 'V_MEDIFLEX_AE',
+                'LB': 'V_MEDIFLEX_Lab',
+                'VS': 'V_MEDIFLEX_VS',
+                'EX': 'V_MEDIFLEX_EX',
+                'CM': 'V_MEDIFLEX_CM',
+                'MH': 'V_MEDIFLEX_MH',
+                'TU': 'V_MEDIFLEX_TUMOR'
+            }
+            
+            # Add priority mappings to cache if they exist
+            for domain, view in domain_view_priority.items():
+                if view in string_views:
+                    domain_view_cache[domain.lower()] = view
+                    print(f"CACHE: Added priority mapping {domain} -> {view}")
+            
+            # Mark domains as processed so we don't do this again
+            domain_processed = True
+            print(f"INFO: Domain view cache initialized with {len(domain_view_cache)} entries")
+            
+        except Exception as e:
+            print(f"ERROR initializing domain cache: {e}")
+            # Continue without cache
+    
+    # Quick processing of query
+    query_lower = query.lower().strip()
+    query_words = query_lower.split()
+    
+    # FAST PATH 1: Direct cache lookup for exact domain matches
+    for word in query_words:
+        if word in domain_view_cache:
+            view = domain_view_cache[word]
+            print(f"CACHE HIT: Using cached view {view} for domain {word}")
+            return view
+    
+    # FAST PATH 2: Look for domain code in query with word boundaries
+    for domain in domain_view_cache.keys():
+        # Check for domain with word boundaries (e.g. "DM " or " DM" but not "ADMH")
+        pattern = r'\b' + re.escape(domain) + r'\b'
+        if re.search(pattern, query_lower):
+            view = domain_view_cache[domain]
+            print(f"CACHE HIT: Found domain {domain} in query with word boundary")
+            return view
+    
+    # If we get here, we need to do the full analysis
+    
     # Extract unique viewnames
     viewnames = edc_metadata['viewname'].unique()
-    print(f"INFO: Available unique viewnames: {len(viewnames)}")
+    string_views = [v for v in viewnames if isinstance(v, str)]
     
-    # Log first few viewnames for debugging
-    sample_views = [v for v in viewnames if isinstance(v, str)][:5]
-    print(f"INFO: Sample viewnames: {sample_views}")
-    
-    # Direct mappings from CDISC domains to EDC view name patterns
-    # This provides a more reliable connection between domains and actual view names
-    domain_to_view_patterns = {
-        # Core SDTM domains with explicit mapping to view patterns
-        'DM': ['DM', 'DEMO', 'SUBJECT'],
-        'AE': ['AE', 'ADVERSE'],
-        'LB': ['LAB', 'BLOOD', 'SPECIMEN', 'URINE'],
-        'EX': ['EX', 'EXPOSURE', 'DRUG', 'MEDICATION', 'TREATMENT'],
-        'CM': ['CM', 'CONMED', 'MEDICATION'],
-        'MH': ['MH', 'HISTORY', 'MEDICAL'],
-        'VS': ['VS', 'VITAL', 'BP'],
-        'TU': ['TU', 'TUMOR', 'LESION'],
-        'RS': ['RS', 'RESPONSE', 'RECIST', 'EFFICACY'],
-        'EG': ['EG', 'ECG', 'ELECTRO'],
+    if not string_views:
+        print("ERROR: No valid string viewnames found in metadata")
+        return None
         
-        # ADaM domains
-        'ADSL': ['ADSL', 'SUBJECT', 'DEMO'],
-        'ADAE': ['ADAE', 'AE'],
-        'ADLB': ['ADLB', 'LAB'],
-        'ADEX': ['ADEX', 'EX', 'EXPOSURE'],
-        'ADCM': ['ADCM', 'CM', 'MEDICATION'],
-        'ADRS': ['ADRS', 'RESPONSE'],
-        'ADTU': ['ADTU', 'TUMOR'],
-        'ADVS': ['ADVS', 'VS', 'VITAL'],
-    }
-    
     # Standard CDISC domain patterns for identifying domains in user queries
     query_domain_patterns = {
         # Core domains
@@ -519,69 +605,51 @@ def find_relevant_edc_view(query, edc_metadata):
         'ADTR': ['tumor response', 'adtr', 'best response', 'bor', 'overall response'],
     }
     
-    # Clean string viewnames
-    string_views = [v for v in viewnames if isinstance(v, str)]
-    if not string_views:
-        print("ERROR: No valid string viewnames found in metadata")
-        return None
-    
-    # Preprocessing for better matching
-    query_lower = query.lower().strip()
-    query_words = query_lower.split()
-    
-    print(f"INFO: Processing query: '{query_lower}'")
-    
-    # STEP 1: Direct domain match in query (exact matches like "DM" or "ADSL" as standalone words)
-    for domain in domain_to_view_patterns.keys():
-        if domain.lower() in query_words or domain in query_words:
-            print(f"INFO: Found exact domain match: {domain}")
-            # Look for view names that contain this domain
-            view_patterns = domain_to_view_patterns[domain]
-            
-            for pattern in view_patterns:
-                # Try exact match first
-                pattern_views = [v for v in string_views if pattern.lower() in v.lower()]
-                if pattern_views:
-                    # Sort so that shorter names come first (more specific matches)
-                    pattern_views.sort(key=len)
-                    best_view = pattern_views[0]
-                    print(f"SUCCESS: Matched domain {domain} to view {best_view} using pattern {pattern}")
-                    return best_view
-            
-            # If no pattern match, try any view with the domain code in it
-            domain_views = [v for v in string_views if domain.lower() in v.lower()]
-            if domain_views:
-                best_view = domain_views[0]
-                print(f"SUCCESS: Matched domain {domain} to view {best_view} directly")
-                return best_view
-    
-    # STEP 2: Keyword matching from query to domains
+    # Keyword matching from query to domains - using scoring
     domain_scores = {}
     
     for domain, patterns in query_domain_patterns.items():
-        score = 0
-        for pattern in patterns:
-            if pattern in query_lower:
-                score += 1
-                # Extra weight for exact word matches
-                if pattern in query_words:
-                    score += 2
+        score = sum(1 for pattern in patterns if pattern in query_lower)
         
-        # Add weight for domain code appearing in query
+        # Extra weight for domain code in query
         if domain.lower() in query_lower:
             score += 3
             
         if score > 0:
             domain_scores[domain] = score
     
-    # Sort domains by score
+    # Find best matching domain if any
     if domain_scores:
-        # Find best matching domain
         best_domain = max(domain_scores.items(), key=lambda x: x[1])[0]
-        best_score = domain_scores[best_domain]
-        print(f"INFO: Best domain match: {best_domain} (score: {best_score})")
         
-        # Try to find a view matching this domain
+        # Check cache for this domain
+        if best_domain.lower() in domain_view_cache:
+            view = domain_view_cache[best_domain.lower()]
+            print(f"CACHE HIT: Using cached view {view} for best domain match {best_domain}")
+            return view
+            
+        # If not in cache, look for matching view using domain patterns
+        domain_to_view_patterns = {
+            'DM': ['DM', 'DEMO', 'SUBJECT'],
+            'AE': ['AE', 'ADVERSE'],
+            'LB': ['LAB', 'BLOOD', 'SPECIMEN', 'URINE'],
+            'EX': ['EX', 'EXPOSURE', 'DRUG', 'MEDICATION', 'TREATMENT'],
+            'CM': ['CM', 'CONMED', 'MEDICATION'],
+            'MH': ['MH', 'HISTORY', 'MEDICAL'],
+            'VS': ['VS', 'VITAL', 'BP'],
+            'TU': ['TU', 'TUMOR', 'LESION'],
+            'RS': ['RS', 'RESPONSE', 'RECIST', 'EFFICACY'],
+            'EG': ['EG', 'ECG', 'ELECTRO'],
+            'ADSL': ['ADSL', 'SUBJECT', 'DEMO'],
+            'ADAE': ['ADAE', 'AE'],
+            'ADLB': ['ADLB', 'LAB'],
+            'ADEX': ['ADEX', 'EX', 'EXPOSURE'],
+            'ADCM': ['ADCM', 'CM', 'MEDICATION'],
+            'ADRS': ['ADRS', 'RESPONSE'],
+            'ADTU': ['ADTU', 'TUMOR'],
+            'ADVS': ['ADVS', 'VS', 'VITAL'],
+        }
+        
         view_patterns = domain_to_view_patterns.get(best_domain, [best_domain])
         for pattern in view_patterns:
             matching_views = [v for v in string_views if pattern.lower() in v.lower()]
@@ -592,74 +660,17 @@ def find_relevant_edc_view(query, edc_metadata):
                     best_view = non_raw_views[0]
                 else:
                     best_view = matching_views[0]
-                print(f"SUCCESS: Matched domain {best_domain} to view {best_view} through keyword matching")
-                return best_view
                 
-    # STEP 3: Direct view name search in available views
-    for word in query_words:
-        if len(word) > 2:  # Ignore short words
-            word_views = [v for v in string_views if word.lower() in v.lower()]
-            if word_views:
-                # Prefer non-RAW views
-                non_raw_views = [v for v in word_views if not v.upper().endswith('_RAW')]
-                if non_raw_views:
-                    best_view = non_raw_views[0]
-                    print(f"SUCCESS: Matched query word '{word}' directly to view {best_view}")
-                    return best_view
-                else:
-                    best_view = word_views[0]
-                    print(f"SUCCESS: Matched query word '{word}' directly to view {best_view}")
-                    return best_view
+                # Cache this result for future use
+                domain_view_cache[best_domain.lower()] = best_view
+                print(f"SUCCESS: Domain {best_domain} matched to view {best_view} (added to cache)")
+                return best_view
     
-    # STEP 4: Context-based matching for general queries
-    query_contexts = {
-        'demographics': ['demographic', 'patient', 'subject', 'enrollment'],
-        'safety': ['safety', 'adverse', 'toxicity', 'side effect'],
-        'efficacy': ['efficacy', 'response', 'outcome', 'effectiveness'],
-        'labs': ['laboratory', 'lab', 'test', 'blood', 'urine'],
-        'treatment': ['treatment', 'medication', 'drug', 'dose', 'exposure']
-    }
-    
-    context_scores = {}
-    for context, keywords in query_contexts.items():
-        score = sum(1 for kw in keywords if kw in query_lower)
-        if score > 0:
-            context_scores[context] = score
-    
-    if context_scores:
-        best_context = max(context_scores.items(), key=lambda x: x[1])[0]
-        print(f"INFO: Best context match: {best_context}")
-        
-        # Map contexts to view patterns
-        context_to_view = {
-            'demographics': ['DM', 'DEMO', 'SUBJECT', 'ENROLL'],
-            'safety': ['AE', 'ADVERSE'], 
-            'efficacy': ['RESPONSE', 'EFFICACY', 'TUMOR', 'RS'],
-            'labs': ['LAB', 'BLOOD', 'URINE'],
-            'treatment': ['EX', 'CM', 'MEDICATION', 'TREATMENT']
-        }
-        
-        view_patterns = context_to_view.get(best_context, [])
-        for pattern in view_patterns:
-            matching_views = [v for v in string_views if pattern.lower() in v.lower()]
-            if matching_views:
-                # Prefer non-RAW views
-                non_raw_views = [v for v in matching_views if not v.upper().endswith('_RAW')]
-                if non_raw_views:
-                    best_view = non_raw_views[0]
-                    print(f"SUCCESS: Context {best_context} matched to view {best_view}")
-                    return best_view
-                else:
-                    best_view = matching_views[0]
-                    print(f"SUCCESS: Context {best_context} matched to view {best_view}")
-                    return best_view
-    
-    # STEP 5: Domain-specific mapping as fallback
-    # Explicitly map common domains to expected views
+    # Fallback: direct match to known priority views
     domain_view_priority = {
         'DM': 'V_MEDIFLEX_DM',
         'AE': 'V_MEDIFLEX_AE',
-        'LB': 'V_MEDIFLEX_Lab',  # Notice capitalization matches the actual view
+        'LB': 'V_MEDIFLEX_Lab',
         'VS': 'V_MEDIFLEX_VS',
         'EX': 'V_MEDIFLEX_EX',
         'CM': 'V_MEDIFLEX_CM',
@@ -667,36 +678,16 @@ def find_relevant_edc_view(query, edc_metadata):
         'TU': 'V_MEDIFLEX_TUMOR'
     }
     
-    # Look for these exact views first
-    for domain, view in domain_view_priority.items():
-        if view in string_views:
-            if domain.lower() in query_lower or any(kw in query_lower for kw in query_domain_patterns.get(domain, [])):
-                print(f"SUCCESS: Using domain priority mapping {domain} -> {view}")
-                return view
+    # Last resort: general-purpose fallbacks
+    fallback_views = [v for v in string_views if 'ADDCYCLE' not in v.upper()]
+    if fallback_views:
+        default_view = fallback_views[0]
+        print(f"FALLBACK: Using general view: {default_view}")
+        return default_view
     
-    # STEP 6: Last resort fallback to specific domain-related views rather than ADDCYCLE
-    # Prioritize important clinical data views over cycle/visit views
-    domain_view_fallbacks = [
-        'V_MEDIFLEX_Lab', 'V_MEDIFLEX_AE', 'V_MEDIFLEX_DM',
-        'V_MEDIFLEX_VS', 'V_MEDIFLEX_EX', 'V_MEDIFLEX_CM',
-        'V_MEDIFLEX_MH', 'V_MEDIFLEX_TUMOR', 'V_MEDIFLEX_BLOOD'
-    ]
-    
-    for view in domain_view_fallbacks:
-        if view in string_views:
-            print(f"FALLBACK: Using general-purpose clinical view {view}")
-            return view
-            
-    # Absolute last resort: use first non-ADDCYCLE view
-    for view in string_views:
-        if 'ADDCYCLE' not in view.upper():
-            print(f"LAST RESORT: Using first non-ADDCYCLE view: {view}")
-            return view
-            
-    # If all else fails, use first string view but log a warning
-    default_view = string_views[0]
-    print(f"WARNING: No domain-specific match found. Defaulting to first view: {default_view}")
-    return default_view
+    # If no string views available at all
+    print("ERROR: No usable views found")
+    return None
 
 def get_relevant_variables(viewname, edc_metadata):
     """
@@ -1056,9 +1047,18 @@ def clear_chat():
         next_message = ""
         next_image = ""
         
+        # Load welcome template
+        try:
+            with open('templates/welcome_template.html', 'r') as f:
+                welcome_html = f.read()
+                print("INFO: Successfully loaded welcome template")
+        except Exception as template_error:
+            print(f"ERROR: Failed to load welcome template: {template_error}")
+            welcome_html = "<div class='welcome-message'><h3>Chat history cleared</h3></div>"
+        
         # Log success
         print("INFO: Successfully cleared chat history and reset state")
-        return jsonify(success=True, message="Chat history cleared")
+        return jsonify(success=True, message="Chat history cleared", welcome_html=welcome_html)
     except Exception as e:
         error_message = f"Error clearing chat: {str(e)}"
         print(f"ERROR: {error_message}")
@@ -1219,31 +1219,30 @@ ORDER BY
                     relevant_vars = get_relevant_variables(relevant_view, edc_metadata)
                     print(f"INFO: Found relevant view: {relevant_view} with {len(relevant_vars)} variables")
             
-            # Determine the query type and prepare an appropriate prompt
+            # Start measuring prompt preparation time
+            prompt_start_time = time.time()
+            
+            # Determine the query type using optimized analysis
             query_type = analyze_query_type(message)
             print(f"INFO: Query type detected as: {query_type}")
             
-            # Enhanced user prompt with context
+            # Enhanced user prompt with context - more efficient implementation
             if query_type == 'code' and relevant_view and relevant_vars:
                 try:
-                    # Safely build the variable string with error handling
-                    var_strings = []
-                    for var in relevant_vars[:10]:  # Limit to 10 vars
-                        try:
-                            if isinstance(var, dict) and 'fieldname' in var and 'label' in var:
-                                var_strings.append(f"{var['fieldname']} ({var['label']})")
-                            elif isinstance(var, dict) and 'fieldname' in var:
-                                var_strings.append(f"{var['fieldname']}")
-                            else:
-                                print(f"WARNING: Unexpected variable format: {var}")
-                        except Exception as var_error:
-                            print(f"ERROR processing variable: {var_error}")
-                            continue
+                    # Fast implementation for variable string building - limit to 10 vars
+                    # Use list comprehension instead of loop for better performance
+                    var_strings = [
+                        f"{var.get('fieldname', 'Unknown')} ({var.get('label', 'No label')})" 
+                        for var in relevant_vars[:10] 
+                        if isinstance(var, dict) and 'fieldname' in var
+                    ]
                     
+                    # Fast string joining
                     relevant_vars_str = ", ".join(var_strings)
                     if len(relevant_vars) > 10:
                         relevant_vars_str += f" and {len(relevant_vars) - 10} more variables"
                     
+                    # Create prompt with fast string formatting
                     enhanced_prompt = code_prompt_template.format(
                         query=message,
                         relevant_view=relevant_view,
@@ -1252,10 +1251,10 @@ ORDER BY
                     print(f"INFO: Enhanced code prompt with view context: {relevant_view}")
                 except Exception as prompt_error:
                     print(f"ERROR building enhanced code prompt: {prompt_error}")
-                    traceback.print_exc()
                     enhanced_prompt = message  # Fallback to original message
             elif query_type == 'explanation' and relevant_view:
                 try:
+                    # Simple template formatting for explanation prompt
                     enhanced_prompt = explanation_prompt_template.format(
                         query=message,
                         relevant_view=relevant_view
@@ -1263,11 +1262,14 @@ ORDER BY
                     print(f"INFO: Enhanced explanation prompt with view context: {relevant_view}")
                 except Exception as prompt_error:
                     print(f"ERROR building enhanced explanation prompt: {prompt_error}")
-                    traceback.print_exc()
                     enhanced_prompt = message  # Fallback to original message
             else:
                 enhanced_prompt = message
                 print("INFO: Using original prompt (no enhancement)")
+                
+            # Log prompt preparation time
+            prompt_prep_time = time.time() - prompt_start_time
+            print(f"INFO: Prompt preparation took {prompt_prep_time:.3f} seconds")
             
             # Add SDTM metadata if relevant
             if sdtm_metadata and ('sdtm' in message.lower() or 'domain' in message.lower()):

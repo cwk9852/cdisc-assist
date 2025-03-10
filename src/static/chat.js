@@ -190,25 +190,18 @@ document.addEventListener('DOMContentLoaded', function() {
               .then(response => response.json())
               .then(data => {
                   if (data.success) {
-                      // Reset UI
-                      document.querySelector('.messages').innerHTML = `
-            <div class="welcome-message">
-              <h3>Welcome to the CDISC Standards Assistant</h3>
-              <p>I can help you with:</p>
-              <ul>
-                <li>Converting source data into SDTM/ADaM standards</li>
-                <li>Creating dbt models and SQL transformations for clinical data</li>
-                <li>Implementing RECIST criteria and oncology-specific analyses</li>
-                <li>Designing ADaM datasets for efficacy and safety analysis</li>
-              </ul>
-              <p>Try asking:</p>
-              <div class="example-queries">
-                <div class="example-query" id="ex-1">"Create a mapping from EDC tumor assessment to ADTU"</div>
-                <div class="example-query" id="ex-2">"How should I implement best overall response in ADRS?"</div>
-                <div class="example-query" id="ex-3">"Generate a dbt model for mapping adverse events to ADAE"</div>
-              </div>
-            </div>
-          `;
+                      // Reset UI with welcome HTML from server
+                      if (data.welcome_html) {
+                          document.querySelector('.messages').innerHTML = data.welcome_html;
+                      } else {
+                          // Fallback if no welcome HTML is provided
+                          document.querySelector('.messages').innerHTML = `
+                <div class="welcome-message">
+                  <h3>Welcome to the CDISC Standards Assistant</h3>
+                  <p>Context has been reset successfully.</p>
+                </div>
+              `;
+                      }
                   } else {
                       console.error('Failed to clear context:', data.message);
                   }
